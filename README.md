@@ -23,6 +23,7 @@ Internal single-page tool. 靜態網頁（GitHub Pages）＋ Google Apps Script 
 | 摘要 | 對話群 × 日期一列，JSON 欄是完整摘要 |
 | 單字 | 每個單字一列，含例句、出處訊息、上傳 ID |
 | 附件 | 每個附件一列：對應的訊息、雲端硬碟檔案、擷取內容 |
+| 單字標記 | Tina 對單字的標記（重要／略過）與練習紀錄（練習次數、答對、答錯、最近 10 次結果） |
 | 事件 | 每日抽出的事件（類型、事件日期、主題、狀態、嚴重度、出處訊息） |
 | 報告 | 期間報告（JSON 分段存在 JSON1～JSON6） |
 | 上傳紀錄 | 每次上傳一列 |
@@ -50,4 +51,4 @@ Internal single-page tool. 靜態網頁（GitHub Pages）＋ Google Apps Script 
 - 模型在 `Code.gs` 開頭的 `MODELS`（目前三項都用 `claude-opus-5-5`，精準優先）；`PRICE` 只用來估算用量。
 - 網頁端參數在 `index.html` 開頭：`SEG_H`（片高）、`SEG_OV`（重疊）、`MAX_W`（寬度上限）、`CONC`（同時送幾片）。
 - 沒有每日次數限制；用量看「用量」工作表與 Claude Console。
-- 單字練習的熟悉度只存在使用者瀏覽器（localStorage）。
+- 單字：Tina 標成「★ 重要」的才會出練習題（英翻中、中翻英、例句填空，弱的先出）；「略過」的會隱藏，之後擷取新單字時也不再挑。練習結果存在「單字標記」工作表，可以從這裡看學習狀況。

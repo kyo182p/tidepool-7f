@@ -162,6 +162,17 @@ details>summary{cursor:pointer;color:var(--navy);font-size:12.5px}
 .covt td.y{background:var(--ok-soft);color:var(--ok)} .covt td.p{background:var(--warn-soft);color:var(--warn)}
 .covt td.l{text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 label.gc{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--rule);border-radius:14px;padding:2px 10px;font-size:12.5px;background:var(--surface);cursor:pointer}
+/* 單字 */
+.vtab{border:1px solid var(--rule);background:var(--surface);border-radius:14px;padding:3px 12px;font-size:13px;cursor:pointer;color:var(--ink-2)}
+.vtab.on{background:var(--navy);color:var(--surface);border-color:var(--navy)}
+.mbar{display:flex;height:10px;border-radius:5px;overflow:hidden;background:var(--sunk);margin:6px 0;max-width:520px}
+.mbar i{display:block;height:100%}
+.optb{display:block;width:100%;text-align:left;margin:7px 0;padding:10px 14px;border:1px solid var(--rule);border-radius:6px;background:var(--surface);cursor:pointer;font-size:15px}
+.optb:hover{border-color:var(--navy)}
+.optb.ok{background:var(--ok-soft);border-color:var(--ok);color:var(--ok)}
+.optb.ng{background:var(--stop-soft);border-color:var(--stop);color:var(--stop)}
+.optb:disabled{cursor:default}
+.qbox{max-width:640px;margin:0 auto}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--rule);border-top-color:var(--buoy);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
 @media print{.top,.nav,#tab-report>.card,#gerr{display:none!important}body{background:#fff}#rpView .card{border:none}.ref,#rpCopy,#rpPrint{display:none}}
@@ -286,12 +297,14 @@ label.gc{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--r
   <!-- 單字 -->
   <section id="tab-vocab" class="hide">
     <div class="card">
-      <div class="row">
+      <div id="vstatus"></div>
+      <div class="row" style="margin-top:10px">
         <label class="f">篩選<input type="text" id="vq" placeholder="單字或中文"></label>
         <label class="f">對話群<select id="vg"></select></label>
-        <button class="btn" id="btnPractice">開始練習</button>
-        <span class="hint" id="vstat"></span>
+        <button class="btn" id="btnPractice">練習重要單字</button>
       </div>
+      <div class="row" id="vviews" style="margin-top:10px;gap:6px"></div>
+      <div class="hint" style="margin-top:6px">按「★ 重要」的單字會拿來出練習題；按「略過」的先藏起來，之後擷取新單字時也不會再挑它。</div>
     </div>
     <div id="practice" class="hide"></div>
     <div class="card" id="vlist"></div>
@@ -407,7 +420,7 @@ async function loadAll() {
   try {
     const [p, b] = await Promise.all([api('ping'), api('bootstrap')]);
     ME.name = p.name;
-    DB = { groups: b.groups, runs: b.runs, sums: b.sums, vocab: b.vocab, evDays: b.evDays || {}, msgDays: b.msgDays || {}, reports: b.reports || [] };
+    DB = { groups: b.groups, runs: b.runs, sums: b.sums, vocab: b.vocab, evDays: b.evDays || {}, msgDays: b.msgDays || {}, reports: b.reports || [], vmarks: b.vmarks || [] };
     $('#who').textContent = ME.name + ' ・ 截圖者：' + ME.owner;
     fillGroupSelect(); renderGroups(); renderDates(); renderVocab(); renderRuns(); renderReportTab();
     if (CUR_G) openGroup(CUR_G);
@@ -1082,7 +1095,8 @@ function sumHTML(s) {
 function dayCard(gid, date, msgs, sumRow, opt) {
   const s = sumRow && sumRow.summary;
   const card = el('div', 'dcard'); card.dataset.date = date; card.dataset.group = gid;
-  const voc = DB.vocab.filter(v => v.group === gid && v.date === date);
+  const vmk = VM();
+  const voc = DB.vocab.filter(v => v.group === gid && v.date === date && (vmk.get(v.term.toLowerCase()) || {}).mark !== 'skip');
   const title = s ? (s.title.zh + (s.bilingual && s.title.en ? ' ／ ' + s.title.en : '')) : '';
   card.innerHTML = `<header><h3>${opt.showGroup ? esc(gname(gid)) : (date ? esc(date) + '（' + wday(date) + '）' : '日期不明')}</h3>
     <span class="ttl">${esc(title)}${s && s.bilingual ? ' <span class="tag">中英對照</span>' : ''}</span>
@@ -1091,7 +1105,7 @@ function dayCard(gid, date, msgs, sumRow, opt) {
     ${opt.showGroup ? '<button class="btn ghost sm" data-act="go">到對話群</button>' : ''}</header>
     <div class="body">${sumHTML(s)}
       ${(opt.atts || []).length ? `<div class="sec">附件</div><div class="chips">${opt.atts.map(attChip).join('')}</div>` : ''}
-      ${voc.length ? `<div class="sec">單字</div><div class="chips">${voc.map((v, i) => `<span class="chip" data-v="${i}"><b>${esc(v.term)}</b> ${esc(v.zh)}</span>`).join('')}</div>` : ''}
+      ${voc.length ? `<div class="sec">單字</div><div class="chips">${voc.map((v, i) => `<span class="chip" data-v="${i}">${(vmk.get(v.term.toLowerCase()) || {}).mark === 'important' ? '★ ' : ''}<b>${esc(v.term)}</b> ${esc(v.zh)}</span>`).join('')}</div>` : ''}
       <div class="raw hide" style="margin-top:10px">${sortMsgs(msgs).map(m => msgHTML(m, opt.atts)).join('')}</div></div>`;
   const raw = card.querySelector('.raw');
   card.querySelector('[data-act=raw]').onclick = () => raw.classList.toggle('hide');
@@ -1181,7 +1195,10 @@ async function openDate(d) {
 }
 
 /* ================= 單字 ================= */
-const VS = () => LS.get('cd_vocab', {});
+let VVIEW = 'todo';     // todo 待標記 / important 重要 / all 全部 / skip 已略過
+const VM = () => { const m = new Map(); (DB.vmarks || []).forEach(x => m.set(x.term, x)); return m; };
+const escRe = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 function vocabAgg() {
   const m = new Map();
   DB.vocab.forEach(v => {
@@ -1192,52 +1209,150 @@ function vocabAgg() {
   return [...m.values()].map(a => { a.items.sort((x, y) => (y.date || '').localeCompare(x.date || '')); a.last = a.items[0].date; return a; })
     .sort((a, b) => (b.last || '').localeCompare(a.last || '') || a.term.localeCompare(b.term));
 }
+function mastery(m) {
+  if (!m || !m.tries) return 'new';
+  const r = (m.recent || '').slice(-5), acc = r.length ? [...r].filter(c => c === '1').length / r.length : 0;
+  return m.ok >= 3 && acc >= 0.8 ? 'good' : 'learning';
+}
+const MAST = { new: '還沒練', learning: '學習中', good: '熟練' };
+const pct = m => m && m.tries ? Math.round(m.ok / m.tries * 100) + '%' : '—';
+function setVM(list) { (list || []).forEach(x => { const i = DB.vmarks.findIndex(y => y.term === x.term); if (i >= 0) DB.vmarks[i] = x; else DB.vmarks.push(x); }); }
+async function markTerms(keys, mark) {
+  keys.forEach(k => { const x = DB.vmarks.find(y => y.term === k); if (x) x.mark = mark; else DB.vmarks.push({ term: k, mark, tries: 0, ok: 0, ng: 0, recent: '' }); });
+  renderVocab();
+  try { const r = await api('vocabMark', { terms: keys, mark }); setVM(r.marks); }
+  catch (e) { gerr('單字標記沒有存到：' + errText(e)); }
+}
 function renderVocab() {
   const vg = $('#vg'), keep = vg.value;
   const gs = [...new Set(DB.vocab.map(v => v.group))];
   vg.innerHTML = '<option value="">全部</option>' + gs.map(g => `<option value="${esc(g)}">${esc(gname(g))}</option>`).join('');
   vg.value = gs.includes(keep) ? keep : '';
-  const q = $('#vq').value.trim().toLowerCase(), st = VS();
-  const list = vocabAgg().filter(a => (!q || (a.term + a.zh + a.explain).toLowerCase().includes(q)) && (!vg.value || a.items.some(v => v.group === vg.value)));
-  const known = list.filter(a => (st[a.key] || {}).ok > (st[a.key] || {}).ng).length;
-  $('#vstat').textContent = `${list.length} 個單字，已記住 ${known} 個`;
+  const vm = VM(), q = $('#vq').value.trim().toLowerCase();
+  const agg = vocabAgg();
+  const mk = a => (vm.get(a.key) || {}).mark || '';
+  // 學習狀況(只看重要單字)
+  const imp = agg.filter(a => mk(a) === 'important');
+  const c = { new: 0, learning: 0, good: 0 }; imp.forEach(a => c[mastery(vm.get(a.key))]++);
+  const tries = imp.reduce((n, a) => n + ((vm.get(a.key) || {}).tries || 0), 0), oks = imp.reduce((n, a) => n + ((vm.get(a.key) || {}).ok || 0), 0);
+  const lastP = imp.map(a => (vm.get(a.key) || {}).last || '').sort().pop() || '';
+  const w = n => imp.length ? (n / imp.length * 100) + '%' : '0';
+  $('#vstatus').innerHTML = `<h2 style="margin:0 0 4px">學習狀況</h2>` + (imp.length
+    ? `<div>重要單字 <b>${imp.length}</b> 個：<span style="color:var(--ok)">熟練 ${c.good}</span>・<span style="color:var(--warn)">學習中 ${c.learning}</span>・還沒練 ${c.new}
+        <span class="hint">（累計作答 ${tries} 題，答對率 ${tries ? Math.round(oks / tries * 100) : 0}%${lastP ? '，最後練習 ' + esc(lastP.slice(0, 16)) : ''}）</span></div>
+       <div class="mbar"><i style="width:${w(c.good)};background:var(--ok)"></i><i style="width:${w(c.learning)};background:var(--warn)"></i></div>
+       <div class="hint">熟練＝至少答對 3 次、而且最近 5 次答對 8 成以上。</div>`
+    : '<div class="hint">還沒有標成「★ 重要」的單字。先在下面的清單挑出想學的字。</div>');
+  // 分類
+  const base = agg.filter(a => (!q || (a.term + a.zh + a.explain).toLowerCase().includes(q)) && (!vg.value || a.items.some(v => v.group === vg.value)));
+  const cnt = { todo: 0, important: 0, skip: 0, all: 0 };
+  base.forEach(a => { const m = mk(a); cnt[m === 'important' ? 'important' : m === 'skip' ? 'skip' : 'todo']++; if (m !== 'skip') cnt.all++; });
+  const views = [['todo', '待標記'], ['important', '★ 重要'], ['all', '全部（不含略過）'], ['skip', '已略過']];
+  $('#vviews').innerHTML = views.map(([k, t]) => `<button class="vtab${VVIEW === k ? ' on' : ''}" data-vv="${k}">${t} ${cnt[k]}</button>`).join('') +
+    (VVIEW === 'todo' && cnt.todo ? '<span style="flex:1"></span><button class="btn ghost sm" id="vSkipAll" title="把目前清單裡還沒標記的全部略過">其餘全部略過</button>' : '');
+  $('#vviews').querySelectorAll('[data-vv]').forEach(b => b.onclick = () => { VVIEW = b.dataset.vv; renderVocab(); });
+  const list = base.filter(a => { const m = mk(a); return VVIEW === 'todo' ? !m : VVIEW === 'important' ? m === 'important' : VVIEW === 'skip' ? m === 'skip' : m !== 'skip'; });
+  const sa = $('#vSkipAll');
+  if (sa) sa.onclick = () => { if (!sa.dataset.sure) { sa.dataset.sure = 1; sa.textContent = `確定把 ${list.length} 個都略過？`; sa.style.color = 'var(--stop)'; return; } markTerms(list.map(a => a.key), 'skip'); };
   $('#vlist').innerHTML = list.map(a => {
-    const s = st[a.key] || {};
-    return `<div class="vrow"><div><div class="term">${esc(a.term)}</div><div class="hint">${s.ok || s.ng ? `記住 ${s.ok || 0}・不熟 ${s.ng || 0}` : '還沒練過'}</div></div>
+    const m = vm.get(a.key) || {}, mark = m.mark || '', ms = mastery(m);
+    return `<div class="vrow"><div><div class="term">${mark === 'important' ? '★ ' : ''}${esc(a.term)}</div>
+        <div class="hint">${mark === 'important' ? `${MAST[ms]}・練 ${m.tries || 0} 次・答對率 ${pct(m)}` : mark === 'skip' ? '已略過' : '待標記'}</div>
+        <div class="row" style="gap:4px;margin-top:5px">
+          ${mark === 'important' ? `<button class="btn ghost sm" data-mk="" data-k="${esc(a.key)}">取消重要</button>` : `<button class="btn sm" data-mk="important" data-k="${esc(a.key)}">★ 重要</button>`}
+          ${mark === 'skip' ? `<button class="btn ghost sm" data-mk="" data-k="${esc(a.key)}">恢復</button>` : `<button class="btn ghost sm" data-mk="skip" data-k="${esc(a.key)}">略過</button>`}</div></div>
       <div><b>${esc(a.zh)}</b> <span class="hint">出現 ${a.items.length} 次</span><div>${esc(a.explain)}</div>
-      <div class="hint" style="margin-top:3px">「${esc(a.items[0].example)}」</div>
-      <div class="src">${a.items.slice(0, 6).map((v, i) => `<a data-k="${esc(a.key)}" data-i="${i}">${esc(gname(v.group))} · ${esc(v.date)}${v.run ? ' · #' + runNo(v.run) : ''}</a>`).join('')}</div></div></div>`;
-  }).join('') || '<div class="hint">還沒有單字。上傳含英文的對話後會自動擷取。</div>';
-  const agg = new Map(list.map(a => [a.key, a]));
-  $('#vlist').querySelectorAll('[data-k]').forEach(x => x.onclick = () => { const v = agg.get(x.dataset.k).items[+x.dataset.i]; tab('groups'); openGroup(v.group, { date: v.date, msg: v.msg }); });
+        <div class="hint" style="margin-top:3px">「${esc(a.items[0].example)}」</div>
+        <div class="src">${a.items.slice(0, 6).map((v, i) => `<a data-k="${esc(a.key)}" data-i="${i}">${esc(gname(v.group))} · ${esc(v.date)}${v.run ? ' · #' + runNo(v.run) : ''}</a>`).join('')}</div></div></div>`;
+  }).join('') || `<div class="hint">${VVIEW === 'todo' ? '沒有待標記的單字了。' : VVIEW === 'important' ? '還沒有重要單字。' : '沒有單字。'}</div>`;
+  const byKey = new Map(agg.map(a => [a.key, a]));
+  $('#vlist').querySelectorAll('[data-mk]').forEach(b => b.onclick = () => markTerms([b.dataset.k], b.dataset.mk));
+  $('#vlist').querySelectorAll('a[data-k]').forEach(x => x.onclick = () => { const v = byKey.get(x.dataset.k).items[+x.dataset.i]; tab('groups'); openGroup(v.group, { date: v.date, msg: v.msg }); });
 }
 $('#vq').oninput = renderVocab; $('#vg').onchange = renderVocab;
+
+/* 練習:只出「重要」的單字,弱的先出;題型隨機:英翻中、中翻英、例句填空 */
+let PEND = [], PTIMER = null;
+function recordAnswer(term, ok) {
+  PEND.push({ term, ok });
+  const x = DB.vmarks.find(y => y.term === term);
+  if (x) { x.tries = (x.tries || 0) + 1; ok ? x.ok = (x.ok || 0) + 1 : x.ng = (x.ng || 0) + 1; x.recent = ((x.recent || '') + (ok ? '1' : '0')).slice(-10); }
+  clearTimeout(PTIMER); PTIMER = setTimeout(flushAnswers, 1500);
+}
+async function flushAnswers() {
+  if (!PEND.length) return;
+  const batch = PEND; PEND = [];
+  try { const r = await api('vocabPractice', { results: batch }); setVM(r.marks); }
+  catch (e) { PEND = batch.concat(PEND); gerr('練習紀錄沒有存到，稍後會再試：' + errText(e)); clearTimeout(PTIMER); PTIMER = setTimeout(flushAnswers, 8000); }
+}
+window.addEventListener('beforeunload', () => { if (PEND.length) flushAnswers(); });
+function makeQ(a, pool) {
+  const v = a.items.find(x => x.example && new RegExp(escRe(a.term), 'i').test(x.example)) || a.items[0];
+  const others = shuffle(pool.filter(x => x.key !== a.key));
+  const types = [];
+  if (others.length >= 3) { types.push('en2zh', 'zh2en'); if (v.example && new RegExp(escRe(a.term), 'i').test(v.example)) types.push('cloze', 'cloze'); }
+  const type = types.length ? types[Math.floor(Math.random() * types.length)] : 'card';
+  const uniq = (arr, f) => { const seen = new Set(); return arr.filter(x => { const k = f(x); if (seen.has(k)) return false; seen.add(k); return true; }); };
+  const opts = type === 'en2zh' ? uniq([a, ...others], x => x.zh).slice(0, 4) : uniq([a, ...others], x => x.key).slice(0, 4);
+  return { a, v, type, opts: shuffle(opts) };
+}
 $('#btnPractice').onclick = () => {
-  const st = VS(), g = $('#vg').value;
-  let deck = vocabAgg().filter(a => !g || a.items.some(v => v.group === g));
-  if (!deck.length) return;
-  const score = a => { const s = st[a.key] || {}; return (s.ok || 0) - (s.ng || 0) * 2 + Math.random(); };
-  deck.sort((a, b) => score(a) - score(b)); deck = deck.slice(0, 20);
-  let i = 0;
+  const vm = VM(), g = $('#vg').value, pool = vocabAgg().filter(a => (vm.get(a.key) || {}).mark !== 'skip');
+  let deck = pool.filter(a => (vm.get(a.key) || {}).mark === 'important' && (!g || a.items.some(v => v.group === g)));
   const box = $('#practice'); box.classList.remove('hide');
-  const show = (reveal) => {
-    if (i >= deck.length) { box.innerHTML = `<div class="card flash-card"><div class="big">練完了 👏</div><div class="hint">${deck.length} 個單字</div><button class="btn" id="pcEnd">結束</button></div>`;
-      $('#pcEnd').onclick = () => { box.classList.add('hide'); renderVocab(); }; return; }
-    const a = deck[i], v = a.items[0];
-    const ex = esc(v.example).replace(new RegExp(a.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), m => `<mark>${m}</mark>`);
-    box.innerHTML = `<div class="card flash-card"><div class="hint">${i + 1} / ${deck.length}</div><div class="big">${esc(a.term)}</div>
-      <div class="ex">${ex}</div>
-      ${reveal ? `<div style="font-size:18px;font-weight:700">${esc(a.zh)}</div><div style="margin:6px 0">${esc(a.explain)}</div>
-        ${v.example_zh ? `<div class="hint">${esc(v.example_zh)}</div>` : ''}<div class="hint" style="margin-top:6px">出處：${esc(gname(v.group))} · ${esc(v.date)}</div>
-        <div class="row" style="justify-content:center;margin-top:14px"><button class="btn ghost" id="pcNg">不熟</button><button class="btn" id="pcOk">記住了</button></div>`
-      : `<div class="row" style="justify-content:center;margin-top:14px"><button class="btn" id="pcShow">看答案</button></div>`}
-      <div style="margin-top:10px"><a href="#" id="pcStop" class="hint">結束練習</a></div></div>`;
-    const mark = ok => { const s = VS(); const r = s[a.key] || { ok: 0, ng: 0 }; ok ? r.ok++ : r.ng++; r.t = Date.now(); s[a.key] = r; LS.set('cd_vocab', s); i++; show(false); };
-    if (reveal) { $('#pcOk').onclick = () => mark(true); $('#pcNg').onclick = () => mark(false); }
-    else $('#pcShow').onclick = () => show(true);
-    $('#pcStop').onclick = e => { e.preventDefault(); box.classList.add('hide'); renderVocab(); };
+  if (!deck.length) { box.innerHTML = '<div class="card">還沒有「★ 重要」的單字。先在清單裡把想練的字標成重要，再按練習。</div>'; return; }
+  const rank = { new: 0, learning: 1, good: 2 };
+  const acc = a => { const m = vm.get(a.key) || {}; return m.tries ? m.ok / m.tries : 0; };
+  deck = shuffle(deck).sort((x, y) => (rank[mastery(vm.get(x.key))] - rank[mastery(vm.get(y.key))]) || (acc(x) - acc(y))).slice(0, 12);
+  const qs = deck.map(a => makeQ(a, pool));
+  let i = 0, right = 0; const wrong = [];
+  const mark = (txt, a) => esc(txt).replace(new RegExp(escRe(esc(a.term)), 'ig'), m => `<mark>${m}</mark>`);
+  const show = () => {
+    if (i >= qs.length) {
+      flushAnswers();
+      box.innerHTML = `<div class="card flash-card"><div class="big">${right} / ${qs.length}</div>
+        ${wrong.length ? `<div class="hint">要再複習：${wrong.map(a => esc(a.term)).join('、')}</div>` : '<div class="hint">全對 👏</div>'}
+        <div class="row" style="justify-content:center;margin-top:14px"><button class="btn" id="pcAgain">再練一輪</button><button class="btn ghost" id="pcEnd">結束</button></div></div>`;
+      $('#pcAgain').onclick = () => $('#btnPractice').onclick();
+      $('#pcEnd').onclick = () => { box.classList.add('hide'); renderVocab(); };
+      renderVocab(); return;
+    }
+    const { a, v, type, opts } = qs[i];
+    const head = `<div class="hint">${i + 1} / ${qs.length}・${{ en2zh: '選出中文意思', zh2en: '選出英文', cloze: '例句填空', card: '翻卡' }[type]}</div>`;
+    let prompt = '';
+    if (type === 'en2zh') prompt = `<div class="big">${esc(a.term)}</div>${v.example ? `<div class="ex">${mark(v.example, a)}</div>` : ''}`;
+    if (type === 'zh2en') prompt = `<div class="big" style="font-size:24px">${esc(a.zh)}</div><div class="ex">${esc(a.explain)}</div>`;
+    if (type === 'cloze') prompt = `<div class="ex" style="font-size:17px">${esc(v.example).replace(new RegExp(escRe(esc(a.term)), 'ig'), '<b>＿＿＿＿</b>')}</div>${v.example_zh ? `<div class="hint">${esc(v.example_zh)}</div>` : ''}`;
+    if (type === 'card') prompt = `<div class="big">${esc(a.term)}</div>${v.example ? `<div class="ex">${mark(v.example, a)}</div>` : ''}`;
+    const reveal = () => `<div style="margin-top:12px;text-align:left"><b>${esc(a.term)}</b>：${esc(a.zh)}<div>${esc(a.explain)}</div>
+      ${v.example ? `<div class="hint" style="margin-top:4px">「${esc(v.example)}」${v.example_zh ? '<br>' + esc(v.example_zh) : ''}</div>` : ''}
+      <div class="hint">出處：${esc(gname(v.group))} · ${esc(v.date)}</div></div>`;
+    box.innerHTML = `<div class="card flash-card"><div class="qbox">${head}${prompt}
+      ${type === 'card' ? '<div class="row" style="justify-content:center;margin-top:14px"><button class="btn" id="pcShow">看答案</button></div>'
+        : opts.map((o, k) => `<button class="optb" data-o="${k}">${esc(type === 'en2zh' ? o.zh : o.term)}</button>`).join('')}
+      <div id="pcAfter"></div><div style="margin-top:10px"><a href="#" id="pcStop" class="hint">結束練習</a></div></div></div>`;
+    const after = ok => {
+      recordAnswer(a.key, ok); if (ok) right++; else wrong.push(a);
+      $('#pcAfter').innerHTML = `<div style="margin-top:8px;font-weight:700;color:${ok ? 'var(--ok)' : 'var(--stop)'}">${ok ? '答對了' : '答錯了'}</div>` + reveal() +
+        `<div class="row" style="justify-content:center;margin-top:12px"><button class="btn" id="pcNext">${i + 1 < qs.length ? '下一題' : '看結果'}</button></div>`;
+      $('#pcNext').onclick = () => { i++; show(); };
+    };
+    if (type === 'card') $('#pcShow').onclick = () => {
+      $('#pcAfter').innerHTML = reveal() + '<div class="row" style="justify-content:center;margin-top:12px"><button class="btn ghost" id="pcNg">不熟</button><button class="btn" id="pcOk">記住了</button></div>';
+      $('#pcShow').remove();
+      $('#pcOk').onclick = () => { recordAnswer(a.key, true); right++; i++; show(); };
+      $('#pcNg').onclick = () => { recordAnswer(a.key, false); wrong.push(a); i++; show(); };
+    };
+    box.querySelectorAll('[data-o]').forEach(b => b.onclick = () => {
+      const o = opts[+b.dataset.o], ok = o.key === a.key || (type === 'en2zh' && o.zh === a.zh);
+      box.querySelectorAll('[data-o]').forEach(x => { x.disabled = true; const oo = opts[+x.dataset.o]; if (oo.key === a.key || (type === 'en2zh' && oo.zh === a.zh)) x.classList.add('ok'); });
+      if (!ok) b.classList.add('ng');
+      after(ok);
+    });
+    $('#pcStop').onclick = e => { e.preventDefault(); flushAnswers(); box.classList.add('hide'); renderVocab(); };
+    box.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
-  show(false);
+  show();
 };
 
 /* ================= 上傳紀錄 ================= */

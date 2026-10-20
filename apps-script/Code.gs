@@ -38,6 +38,7 @@ const SHEETS = {
   atts:   { name: '附件',     head: ['附件ID', '群組ID', '訊息ID', '日期', '檔名', '類型', '檔案ID', '雲端連結', '標題', '內容', '上傳ID', '建立時間'] },
   events: { name: '事件',     head: ['事件ID', '群組ID', '來源日期', '類型', '事件日期', '日期說明', '標題', '內容', '相關人', '對象', '主題', '狀態', '嚴重度', '訊息ID', '更新時間'] },
   reports:{ name: '報告',     head: ['報告ID', '建立時間', '使用者', '起', '迄', '群組', '標題', 'JSON1', 'JSON2', 'JSON3', 'JSON4', 'JSON5', 'JSON6'] },
+  vmarks: { name: '單字標記', head: ['單字', '標記', '練習次數', '答對', '答錯', '最後練習', '最近結果', '更新時間', '使用者'] },
   usage:  { name: '用量',     head: ['時間', '使用者', '動作', '模型', '圖片數', '輸入token', '輸出token', '估計美元'] },
 };
 
@@ -119,6 +120,8 @@ function doPost(e) {
       case 'eventsDay':    return out(eventsDay(user, req));
       case 'periodReport': return out(periodReport(user, req));
       case 'reportGet':    return out(reportGet(req));
+      case 'vocabMark':    return out(vocabMark(user, req));
+      case 'vocabPractice': return out(vocabPractice(user, req));
     }
     return out({ ok: false, code: 'bad_action' });
   } catch (err) {
@@ -570,7 +573,9 @@ function vocabDay(user, req) {
   const list = dayMessages(g.id, date), atts = dayAtts(g.id, date);
   let items = [];
   if (list.some(m => /[A-Za-z]{3,}/.test(m.text + m.quote)) || atts.some(a => /[A-Za-z]{3,}/.test(a.content))) {
-    const prompt = '對話群:' + g.name + '\n日期:' + date + '\n\n' + clip(linesFor(list, atts), 120000);
+    const skip = readAll('vmarks').filter(r => r[1] === 'skip').map(r => r[0]).slice(-200);
+    const prompt = '對話群:' + g.name + '\n日期:' + date +
+      (skip.length ? '\n學生已經標示不需要學、不要再挑的字:' + skip.join('、') : '') + '\n\n' + clip(linesFor(list, atts), 120000);
     const r = callClaude(user, 'vocab', MODELS.vocab, [{ type: 'text', text: prompt }], MAX_TOKENS.vocab, VOCAB_SYSTEM, 0);
     const j = parseLoose(r.text);
     if (!j) throw { code: 'bad_ai', message: 'AI 回傳的單字解析失敗' };
@@ -613,7 +618,8 @@ function bootstrap() {
   const msgDays = {};
   readAll('msgs').forEach(r => { if (r[2]) msgDays[r[1] + '|' + r[2]] = (msgDays[r[1] + '|' + r[2]] || 0) + 1; });
   const reports = readAll('reports').reverse().map(r => ({ id: r[0], created: r[1], user: r[2], from: r[3], to: r[4], groups: r[5], title: r[6] }));
-  return { ok: true, groups, runs, sums, vocab, evDays, msgDays, reports };
+  const vmarks = readAll('vmarks').map(vmarkOut);
+  return { ok: true, groups, runs, sums, vocab, evDays, msgDays, reports, vmarks };
 }
 function groupData(req) {
   const gid = String(req.groupId || '');
@@ -917,4 +923,46 @@ function reportGet(req) {
   const rep = JSON.parse(row.slice(7, 13).join(''));
   rep.id = row[0];
   return { ok: true, report: rep };
+}
+
+/* ===== 9. 單字標記與練習紀錄(Tina 的學習狀況) ===== */
+function vmarkOut(r) {
+  return { term: r[0], mark: r[1], tries: +r[2] || 0, ok: +r[3] || 0, ng: +r[4] || 0, last: r[5], recent: r[6] || '', updated: r[7], user: r[8] };
+}
+function vmarkUpsert(user, terms, fn) {
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const sh = sheet('vmarks'), rows = readAll('vmarks'), idx = {};
+    rows.forEach((r, i) => idx[r[0]] = i);
+    const now = stamp(), add = [], out = [];
+    terms.forEach(t => {
+      const key = clip(String(t || '').trim().toLowerCase(), 120); if (!key) return;
+      let r = idx[key] !== undefined ? rows[idx[key]] : null;
+      const isNew = !r;
+      if (isNew) r = [key, '', '0', '0', '0', '', '', '', ''];
+      fn(r, t);
+      r[7] = now; r[8] = user.name;
+      if (isNew) { add.push(r); idx[key] = -1; } else sh.getRange(idx[key] + 2, 1, 1, r.length).setNumberFormat('@').setValues([r.map(String)]);
+      out.push(vmarkOut(r));
+    });
+    appendRows('vmarks', add);
+    return out;
+  } finally { lock.releaseLock(); }
+}
+function vocabMark(user, req) {
+  const mark = ['important', 'skip', ''].indexOf(req.mark) >= 0 ? req.mark : '';
+  const terms = (Array.isArray(req.terms) ? req.terms : [req.term]).filter(Boolean).slice(0, 500);
+  return { ok: true, marks: vmarkUpsert(user, terms, r => { r[1] = mark; }) };
+}
+function vocabPractice(user, req) {
+  const res = (Array.isArray(req.results) ? req.results : []).filter(x => x && x.term).slice(0, 100);
+  const by = {}; res.forEach(x => { const k = String(x.term).trim().toLowerCase(); (by[k] = by[k] || []).push(!!x.ok); });
+  return { ok: true, marks: vmarkUpsert(user, Object.keys(by), (r, k) => {
+    const list = by[k];
+    r[2] = String((+r[2] || 0) + list.length);
+    r[3] = String((+r[3] || 0) + list.filter(Boolean).length);
+    r[4] = String((+r[4] || 0) + list.filter(x => !x).length);
+    r[5] = stamp();
+    r[6] = (String(r[6] || '') + list.map(x => x ? '1' : '0').join('')).slice(-10);
+  }) };
 }
