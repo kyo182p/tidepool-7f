@@ -17,11 +17,13 @@ const MODELS = {
   vocab:      'claude-opus-5-5',   // 英文單字擷取
   attach:     'claude-opus-5-5',   // 附件(圖片、PDF)內容擷取
   match:      'claude-opus-5-5',   // 附件配對到訊息
+  events:     'claude-opus-5-5',   // 每日事件抽取(期限、決策、突發、人員、船機)
+  report:     'claude-opus-5-5',   // 期間報告
 };
 // 每百萬 token 美元 [輸入, 輸出],只用來估算「用量」工作表
 const PRICE = { 'claude-opus-5-5': [5, 25], 'claude-sonnet-5-5': [3, 15], 'claude-haiku-4-5-20251001': [1, 5] };
 // 實測 Opus 約每秒 100 token;UrlFetchApp 約 60 秒逾時,所以單次輸出抓 4500 以內
-const MAX_TOKENS = { transcribe: 3500, summary: 4500, vocab: 3500, attach: 4000, match: 1000 };
+const MAX_TOKENS = { transcribe: 3500, summary: 4500, vocab: 3500, attach: 4000, match: 1000, events: 4000, report: 4500 };
 const ATT_FOLDER = '對話整理附件';   // 雲端硬碟資料夾名稱
 const MAX_IMAGES = 2;
 const TZ = 'Asia/Taipei';
@@ -34,6 +36,8 @@ const SHEETS = {
   vocab:  { name: '單字',     head: ['單字', '中文', '說明', '例句', '群組ID', '日期', '訊息ID', '上傳ID', '建立時間'] },
   runs:   { name: '上傳紀錄', head: ['上傳ID', '時間', '使用者', '群組ID', '檔名', '截圖日期', '片數', '訊息數', '新增訊息', '最早日期', '最新日期'] },
   atts:   { name: '附件',     head: ['附件ID', '群組ID', '訊息ID', '日期', '檔名', '類型', '檔案ID', '雲端連結', '標題', '內容', '上傳ID', '建立時間'] },
+  events: { name: '事件',     head: ['事件ID', '群組ID', '來源日期', '類型', '事件日期', '日期說明', '標題', '內容', '相關人', '對象', '主題', '狀態', '嚴重度', '訊息ID', '更新時間'] },
+  reports:{ name: '報告',     head: ['報告ID', '建立時間', '使用者', '起', '迄', '群組', '標題', 'JSON1', 'JSON2', 'JSON3', 'JSON4', 'JSON5', 'JSON6'] },
   usage:  { name: '用量',     head: ['時間', '使用者', '動作', '模型', '圖片數', '輸入token', '輸出token', '估計美元'] },
 };
 
@@ -112,6 +116,9 @@ function doPost(e) {
       case 'readAttachment':   return out(readAttachment(user, req));
       case 'matchAttachments': return out(matchAttachments(user, req));
       case 'attGet':       return out(attGet(req));
+      case 'eventsDay':    return out(eventsDay(user, req));
+      case 'periodReport': return out(periodReport(user, req));
+      case 'reportGet':    return out(reportGet(req));
     }
     return out({ ok: false, code: 'bad_action' });
   } catch (err) {
@@ -601,7 +608,12 @@ function bootstrap() {
     capture: r[5], segments: r[6], total: r[7], added: r[8], from: r[9], to: r[10] }));
   const sums = readAll('sums').map(r => ({ group: r[0], date: r[1], updated: r[2], title: r[4] }));
   const vocab = readAll('vocab').map(vocabOut);
-  return { ok: true, groups, runs, sums, vocab };
+  const evDays = {};
+  readAll('events').forEach(r => { evDays[r[1] + '|' + r[2]] = (evDays[r[1] + '|' + r[2]] || 0) + 1; });
+  const msgDays = {};
+  readAll('msgs').forEach(r => { if (r[2]) msgDays[r[1] + '|' + r[2]] = (msgDays[r[1] + '|' + r[2]] || 0) + 1; });
+  const reports = readAll('reports').reverse().map(r => ({ id: r[0], created: r[1], user: r[2], from: r[3], to: r[4], groups: r[5], title: r[6] }));
+  return { ok: true, groups, runs, sums, vocab, evDays, msgDays, reports };
 }
 function groupData(req) {
   const gid = String(req.groupId || '');
@@ -735,4 +747,165 @@ function attGet(req) {
   if (!row) throw { code: 'bad_request', message: '找不到附件' };
   const blob = DriveApp.getFileById(row[6]).getBlob();
   return { ok: true, mime: blob.getContentType() || row[5], name: row[4], data: Utilities.base64Encode(blob.getBytes()) };
+}
+
+/* ===== 7. 每日事件(給期間報告用的結構化資料) ===== */
+const EVENT_TYPES = ['deadline', 'decision', 'incident', 'personnel', 'asset'];
+const EVENTS_SYSTEM = [
+  '你是台灣離岸風場運維現場協調(AOC)的資訊整理員。從一天的 Teams 對話裡,抽出之後需要追蹤或回顧的「事件」。',
+  '類型 type:',
+  '- deadline:有日期要完成或要發生的事(報到、出發、開工、到期、截止、交件、訪客、會議)',
+  '- decision:已經拍板的決定',
+  '- incident:突發、異常、事故、安全問題、臨時變更、延誤、客訴',
+  '- personnel:人員異動(調派、延長、離開、報到、換人、請假、資格證照問題)',
+  '- asset:船舶、直升機、風機、設備、工具的狀態變化',
+  '每個事件欄位:',
+  'type;title(繁體中文 25 字內);detail(繁體中文 60 字內,寫清楚誰、什麼、何時);',
+  'event_date(事件發生或截止的日期 YYYY-MM-DD,依對話日期換算「明天」「週四」等;不知道留空);date_text(原文對日期的說法);',
+  'who(相關人名陣列,照對話寫法);entities(風機編號、船名、公司、文件等陣列);',
+  'topic(主題名稱:優先沿用下面列出的既有主題,同一件事一定要用同一個名字;新主題用簡短名詞片語,例如「Muehlhan TSWA 到場」「ActSafe 檢驗與訓練」);',
+  'status(open 尚未完成/done 已完成/cancelled 取消/info 僅告知);severity(incident 才填 high/medium/low,其他留空);refs(依據的訊息編號,最多 3 個)。',
+  '最多 15 個,同一件事只列一次,閒聊與寒暄不列。只輸出 JSON:{"events":[{"type":"","title":"","detail":"","event_date":"","date_text":"","who":[],"entities":[],"topic":"","status":"","severity":"","refs":[]}]}',
+].join('\n');
+
+function knownTopics(limit) {
+  const seen = {}, out = [];
+  const rows = readAll('events');
+  for (let i = rows.length - 1; i >= 0 && out.length < (limit || 80); i--) {
+    const t = rows[i][10]; if (t && !seen[t]) { seen[t] = true; out.push(t); }
+  }
+  return out;
+}
+function eventOut(r) {
+  return { id: r[0], group: r[1], src: r[2], type: r[3], date: r[4], dateText: r[5], title: r[6], detail: r[7],
+    who: r[8], entities: r[9], topic: r[10], status: r[11], severity: r[12], msgs: String(r[13] || '').split(',').filter(Boolean), updated: r[14] };
+}
+function eventsDay(user, req) {
+  const g = findGroup(req.groupId); if (!g) throw { code: 'bad_group' };
+  const date = validDate(req.date); if (!date) throw { code: 'bad_request', message: '日期格式錯誤' };
+  const list = dayMessages(g.id, date), atts = dayAtts(g.id, date);
+  if (!list.length && !atts.length) throw { code: 'no_messages', message: '這一天沒有訊息' };
+  const topics = knownTopics(80);
+  const prompt = '對話群:' + g.name + '\n對話日期:' + date + '(星期' + '日一二三四五六'[new Date(date + 'T00:00:00Z').getUTCDay()] + ')\n' +
+    '既有主題:' + (topics.length ? topics.join('、') : '(還沒有)') + '\n\n' + clip(linesFor(list, atts), 120000);
+  const r = callClaude(user, 'events', MODELS.events, [{ type: 'text', text: prompt }], MAX_TOKENS.events, EVENTS_SYSTEM, 0);
+  const j = parseLoose(r.text);
+  if (!j) throw { code: 'bad_ai', message: 'AI 回傳的事件解析失敗' };
+  const arr = v => (Array.isArray(v) ? v : (v ? [v] : [])).map(x => clip(String(x), 80)).filter(Boolean).join('、');
+  const items = (Array.isArray(j.events) ? j.events : []).filter(e => e && e.title && EVENT_TYPES.indexOf(e.type) >= 0).slice(0, 20);
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const sh = sheet('events');
+    const rows = readAll('events');
+    let max = 0;
+    rows.forEach(x => { const n = parseInt(String(x[0]).replace(/\D/g, ''), 10); if (n > max) max = n; });
+    for (let i = rows.length - 1; i >= 0; i--) if (rows[i][1] === g.id && rows[i][2] === date) sh.deleteRow(i + 2);
+    const now = stamp();
+    const out = items.map(e => ['e' + String(++max).padStart(5, '0'), g.id, date, e.type, validDate(e.event_date), clip(e.date_text || '', 80),
+      clip(e.title, 120), clip(e.detail || '', 400), arr(e.who), arr(e.entities), clip(String(e.topic || '').trim(), 80),
+      ['open', 'done', 'cancelled', 'info'].indexOf(e.status) >= 0 ? e.status : 'info',
+      e.type === 'incident' && ['high', 'medium', 'low'].indexOf(e.severity) >= 0 ? e.severity : '',
+      mapRefs(e.refs, list).slice(0, 5).join(','), now]);
+    appendRows('events', out);
+    return { ok: true, events: out.map(eventOut), truncated: r.truncated };
+  } finally { lock.releaseLock(); }
+}
+
+/* ===== 8. 期間報告 ===== */
+const REPORT_SYSTEM = [
+  '你是台灣離岸風場運維現場協調(AOC)的資深助理,要幫 AOC 同仁掌握一段期間內「整個專案」的走向。',
+  '輸入是這段期間各對話群抽出的事件(e 開頭編號)與每日摘要標題。資訊散在不同群組,你的工作是把它們串起來:',
+  '1. overview:3 到 6 句繁體中文,說明這段期間的整體走向、最重要的變化、需要特別注意的事。',
+  '2. threads:把同一件事(可能跨群組、跨多天)串成議題,最多 8 個,挑最重要的。每個議題:topic、status(一句話現在的狀態)、',
+  '   timeline(依日期排序,最多 6 步,每步 {date, text, events:[編號]})、next(下一步或待確認事項,沒有就空字串)、priority(high/medium/low)。',
+  '3. merge:不同群組或不同天講的「其實是同一件事」的事件編號分組,例如 [["e3","e17"]]。',
+  '4. updates:後來的對話顯示某事件已經完成、取消或改期,列 {event, status(done/cancelled/changed), note(繁中一句說明,改期要寫新日期)}。',
+  '5. highlights:最需要 AOC 注意的事件編號,最多 8 個。',
+  '6. resolved:「待追問」(q 開頭編號)裡,後來的對話已經有答案的,列 {q, note(繁中一句說明答案)}。',
+  '只根據輸入內容,不要臆測。文字用繁體中文(台灣用語),人名、船名、風機編號照原文。',
+  '只輸出 JSON:{"overview":"","threads":[{"topic":"","status":"","priority":"","timeline":[{"date":"","text":"","events":[]}],"next":"","events":[]}],"merge":[],"updates":[],"highlights":[],"resolved":[]}',
+].join('\n');
+
+function periodReport(user, req) {
+  const from = validDate(req.from), to = validDate(req.to);
+  if (!from || !to || from > to) throw { code: 'bad_request', message: '日期區間錯誤' };
+  const all = groupRows();
+  const gids = Array.isArray(req.groups) && req.groups.length ? req.groups.map(String) : all.map(g => g.id);
+  const gname = id => (all.find(g => g.id === id) || {}).name || id;
+  const inR = d => d && d >= from && d <= to;
+  // 涵蓋範圍
+  const cov = {};
+  gids.forEach(id => cov[id] = { group: id, name: gname(id), msgDays: {}, sumDays: {}, evDays: {} });
+  readAll('msgs').forEach(r => { if (cov[r[1]] && inR(r[2])) cov[r[1]].msgDays[r[2]] = (cov[r[1]].msgDays[r[2]] || 0) + 1; });
+  const sums = readAll('sums').filter(r => cov[r[0]] && inR(r[1])).map(sumOut);
+  sums.forEach(s => cov[s.group].sumDays[s.date] = true);
+  const evAll = readAll('events').map(eventOut).filter(e => cov[e.group]);
+  evAll.forEach(e => { if (inR(e.src)) cov[e.group].evDays[e.src] = true; });
+  // 期間內提到的事件,加上期間前提到、但日期落在期間內的期限
+  const evs = evAll.filter(e => inR(e.src) || (e.src < from && inR(e.date)));
+  const coverage = gids.map(id => {
+    const c = cov[id];
+    const days = Object.keys(c.msgDays).sort();
+    return { group: id, name: c.name, days: days.map(d => ({ date: d, msgs: c.msgDays[d], summary: !!c.sumDays[d], events: !!c.evDays[d] })) };
+  });
+  const missing = [];
+  coverage.forEach(c => c.days.forEach(d => { if (!d.events) missing.push({ group: c.group, date: d.date }); }));
+  if (!evs.length) throw { code: 'no_events', message: '這段期間沒有事件資料' + (missing.length ? '(有 ' + missing.length + ' 天還沒抽事件)' : '') };
+
+  sums.sort((a, b) => a.date < b.date ? -1 : 1);
+  const questions = [];
+  sums.forEach(s => (s.summary && s.summary.questions || []).forEach(q => questions.push({ id: 'q' + (questions.length + 1),
+    group: s.group, groupName: gname(s.group), date: s.date, zh: q.zh, refs: q.refs || [] })));
+  const sumLines = sums.map(s => '[' + s.date + '][' + gname(s.group) + '] ' + ((s.summary && s.summary.title && s.summary.title.zh) || ''));
+  const qLines = questions.map(q => q.id + ' [' + q.date + '][' + q.groupName + '] ' + q.zh);
+  const evLines = evs.map(e => e.id + ' [' + e.src + '][' + gname(e.group) + '][' + e.type + (e.severity ? '/' + e.severity : '') + '][' + (e.topic || '-') + ']' +
+    (e.date ? '[事件日 ' + e.date + ']' : '') + '[' + e.status + '] ' + e.title + ':' + e.detail + (e.who ? '(' + e.who + ')' : ''));
+  const withData = coverage.filter(c => c.days.length).map(c => c.name);
+  const prompt = '期間:' + from + ' ~ ' + to + '\n有資料的對話群:' + withData.join('、') + '\n\n事件(' + evs.length + ' 個):\n' +
+    clip(evLines.join('\n'), 90000) + '\n\n每日摘要標題:\n' + clip(sumLines.join('\n'), 20000) +
+    (qLines.length ? '\n\n待追問:\n' + clip(qLines.join('\n'), 20000) : '');
+  const r = callClaude(user, 'report', MODELS.report, [{ type: 'text', text: prompt }], MAX_TOKENS.report, REPORT_SYSTEM, 0);
+  const j = parseLoose(r.text) || {};
+  const okId = {}; evs.forEach(e => okId[e.id] = true);
+  const ids = v => (Array.isArray(v) ? v : []).map(String).filter(x => okId[x]);
+  const rep = {
+    from, to, groups: gids, groupNames: gids.map(gname), created: stamp(), model: MODELS.report, truncated: r.truncated,
+    overview: clip(j.overview || '', 3000),
+    threads: (Array.isArray(j.threads) ? j.threads : []).slice(0, 10).map(t => ({
+      topic: clip(t.topic || '', 80), status: clip(t.status || '', 300), next: clip(t.next || '', 300),
+      priority: ['high', 'medium', 'low'].indexOf(t.priority) >= 0 ? t.priority : 'medium', events: ids(t.events),
+      timeline: (Array.isArray(t.timeline) ? t.timeline : []).slice(0, 8).map(s => ({ date: clip(s.date || '', 20), text: clip(s.text || '', 300), events: ids(s.events) })),
+    })),
+    merge: (Array.isArray(j.merge) ? j.merge : []).map(ids).filter(m => m.length > 1),
+    updates: (Array.isArray(j.updates) ? j.updates : []).filter(u => u && okId[u.event]).map(u => ({ event: u.event,
+      status: ['done', 'cancelled', 'changed'].indexOf(u.status) >= 0 ? u.status : 'changed', note: clip(u.note || '', 200) })),
+    highlights: ids(j.highlights),
+    events: evs.map(e => Object.assign({}, e, { groupName: gname(e.group) })),
+    questions: (() => {
+      const res = {}; (Array.isArray(j.resolved) ? j.resolved : []).forEach(x => { if (x && x.q) res[String(x.q)] = clip(x.note || '已有答案', 300); });
+      return questions.map(q => Object.assign({}, q, res[q.id] ? { resolved: res[q.id] } : {}));
+    })(),
+    coverage, missing,
+  };
+  const json = JSON.stringify(rep);
+  if (json.length > 6 * 45000) throw { code: 'too_big', message: '期間太長,請縮短日期區間' };
+  const parts = []; for (let i = 0; i < 6; i++) parts.push(json.slice(i * 45000, (i + 1) * 45000));
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  let id;
+  try {
+    let max = 0;
+    readAll('reports').forEach(x => { const n = parseInt(String(x[0]).replace(/\D/g, ''), 10); if (n > max) max = n; });
+    id = 'p' + String(max + 1).padStart(4, '0');
+    const title = from + ' ~ ' + to + '(' + (Array.isArray(req.groups) && req.groups.length ? gids.length + ' 個對話群' : '全部對話群') + ')';
+    appendRows('reports', [[id, rep.created, user.name, from, to, gids.join(','), title].concat(parts)]);
+  } finally { lock.releaseLock(); }
+  rep.id = id;
+  return { ok: true, report: rep };
+}
+function reportGet(req) {
+  const row = readAll('reports').find(r => r[0] === String(req.id || ''));
+  if (!row) throw { code: 'bad_request', message: '找不到報告' };
+  const rep = JSON.parse(row.slice(7, 13).join(''));
+  rep.id = row[0];
+  return { ok: true, report: rep };
 }

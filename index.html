@@ -136,8 +136,35 @@ table.list tr.click:hover{background:var(--sunk)}
 .md{font-size:13.5px;line-height:1.6}
 .md table.bi{margin:6px 0}
 details>summary{cursor:pointer;color:var(--navy);font-size:12.5px}
+/* 期間報告 */
+.rp-sec{margin:14px 0 6px;font-size:14px;font-weight:700;color:var(--ink);display:flex;gap:8px;align-items:center}
+.rp-sec .n{font-size:11.5px;font-weight:400;color:var(--ink-3)}
+.ev{display:grid;grid-template-columns:96px 1fr;gap:10px;padding:7px 4px;border-bottom:1px solid var(--rule-2);font-size:13.5px}
+.ev .d{font-variant-numeric:tabular-nums;color:var(--ink-2);font-size:12.5px}
+.ev .tt{font-weight:600}
+.ev .meta{font-size:12px;color:var(--ink-3);margin-top:2px}
+.ev.over .d,.ev.over .tt{color:var(--stop)}
+.ev.done .tt{text-decoration:line-through;color:var(--ink-3)}
+.pill{display:inline-block;font-size:11px;padding:0 6px;border-radius:9px;margin-left:4px;background:var(--sunk);color:var(--ink-2);font-weight:400}
+.pill.high{background:var(--stop-soft);color:var(--stop)}
+.pill.medium{background:var(--warn-soft);color:var(--warn)}
+.pill.low,.pill.done{background:var(--ok-soft);color:var(--ok)}
+.pill.g{background:var(--navy-soft);color:var(--navy)}
+.thread{border:1px solid var(--rule);border-left:4px solid var(--rule);border-radius:6px;padding:10px 12px;margin-bottom:10px;background:var(--surface)}
+.thread.high{border-left-color:var(--stop)} .thread.medium{border-left-color:var(--warn)} .thread.low{border-left-color:var(--ok)}
+.thread h4{margin:0 0 4px;font-size:14.5px}
+.tl{margin:6px 0 2px;padding-left:14px;border-left:2px solid var(--rule-2)}
+.tl div{margin:3px 0;font-size:13px}
+.tl b{font-variant-numeric:tabular-nums;color:var(--ink-2);font-weight:600;margin-right:6px}
+.covt{border-collapse:collapse;font-size:11.5px;margin-top:6px}
+.covt td,.covt th{border:1px solid var(--rule-2);padding:2px 5px;text-align:center}
+.covt th{font-weight:600;color:var(--ink-3)}
+.covt td.y{background:var(--ok-soft);color:var(--ok)} .covt td.p{background:var(--warn-soft);color:var(--warn)}
+.covt td.l{text-align:left;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+label.gc{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--rule);border-radius:14px;padding:2px 10px;font-size:12.5px;background:var(--surface);cursor:pointer}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--rule);border-top-color:var(--buoy);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
+@media print{.top,.nav,#tab-report>.card,#gerr{display:none!important}body{background:#fff}#rpView .card{border:none}.ref,#rpCopy,#rpPrint{display:none}}
 </style>
 </head>
 <body>
@@ -153,6 +180,7 @@ details>summary{cursor:pointer;color:var(--navy);font-size:12.5px}
   <button data-tab="upload" class="on">上傳分析</button>
   <button data-tab="groups">對話群</button>
   <button data-tab="dates">依日期</button>
+  <button data-tab="report">期間報告</button>
   <button data-tab="vocab">單字練習</button>
   <button data-tab="runs">上傳紀錄</button>
   <button data-tab="search">搜尋</button>
@@ -232,6 +260,27 @@ details>summary{cursor:pointer;color:var(--navy);font-size:12.5px}
       <div class="glist" id="dlist"></div>
       <div id="dmain"><div class="hint">左邊選一天，看那天所有對話群的摘要。</div></div>
     </div>
+  </section>
+
+  <!-- 期間報告 -->
+  <section id="tab-report" class="hide">
+    <div class="card">
+      <h2>產生期間報告</h2>
+      <div class="hint">把選定期間內各對話群的討論串起來：整體走向、跨群組議題、期限時間軸、重要決策、突發事件、人員異動、還沒結論的問題。</div>
+      <div class="row" style="margin-top:10px">
+        <label class="f">從<input type="date" id="rpFrom"></label>
+        <label class="f">到<input type="date" id="rpTo"></label>
+        <span class="row" style="gap:6px">
+          <button class="btn ghost sm" data-rq="7">最近 7 天</button><button class="btn ghost sm" data-rq="14">最近 14 天</button>
+          <button class="btn ghost sm" data-rq="month">本月</button><button class="btn ghost sm" data-rq="lastmonth">上個月</button></span>
+      </div>
+      <div class="hint" style="margin:10px 0 4px">對話群（都不勾＝全部）</div>
+      <div class="chips" id="rpGroups"></div>
+      <div id="rpCov" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:10px"><button class="btn" id="btnReport">產生報告</button><span id="rpInfo" class="hint"></span></div>
+    </div>
+    <div class="card"><h2>已產生的報告</h2><table class="list" id="rpList"></table></div>
+    <div id="rpView"></div>
   </section>
 
   <!-- 單字 -->
@@ -358,9 +407,9 @@ async function loadAll() {
   try {
     const [p, b] = await Promise.all([api('ping'), api('bootstrap')]);
     ME.name = p.name;
-    DB = { groups: b.groups, runs: b.runs, sums: b.sums, vocab: b.vocab };
+    DB = { groups: b.groups, runs: b.runs, sums: b.sums, vocab: b.vocab, evDays: b.evDays || {}, msgDays: b.msgDays || {}, reports: b.reports || [] };
     $('#who').textContent = ME.name + ' ・ 截圖者：' + ME.owner;
-    fillGroupSelect(); renderGroups(); renderDates(); renderVocab(); renderRuns();
+    fillGroupSelect(); renderGroups(); renderDates(); renderVocab(); renderRuns(); renderReportTab();
     if (CUR_G) openGroup(CUR_G);
   } catch (e) {
     if (e.code === 'bad_code') loginModal(errText(e)); else gerr(errText(e));
@@ -370,7 +419,8 @@ async function loadAll() {
 /* ================= 分頁 ================= */
 function tab(name) {
   document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
-  ['upload','groups','dates','vocab','runs','search'].forEach(t => $('#tab-' + t).classList.toggle('hide', t !== name));
+  ['upload','groups','dates','report','vocab','runs','search'].forEach(t => $('#tab-' + t).classList.toggle('hide', t !== name));
+  if (name === 'report') renderReportTab();
 }
 document.querySelectorAll('#nav button').forEach(b => b.onclick = () => tab(b.dataset.tab));
 
@@ -937,11 +987,11 @@ async function summarizeDates(gid, dates, prog) {
   const worker = async () => {
     while (i < dates.length) {
       const d = dates[i++];
-      rows[d].innerHTML = '<span class="spin"></span> 摘要＋單字整理中…';
-      const [a, b] = await Promise.allSettled([api('summarizeDay', { groupId: gid, date: d }), api('vocabDay', { groupId: gid, date: d })]);
-      const fail = [a, b].filter(x => x.status === 'rejected').map(x => errText(x.reason));
+      rows[d].innerHTML = '<span class="spin"></span> 摘要＋單字＋事件整理中…';
+      const [a, b, c] = await Promise.allSettled([api('summarizeDay', { groupId: gid, date: d }), api('vocabDay', { groupId: gid, date: d }), api('eventsDay', { groupId: gid, date: d })]);
+      const fail = [a, b, c].filter(x => x.status === 'rejected').map(x => errText(x.reason));
       rows[d].innerHTML = fail.length ? `<span style="color:var(--stop)">${esc(fail.join('；'))}（之後可在對話群裡按「重新整理」）</span>`
-        : `完成${b.value.vocab.length ? '，' + b.value.vocab.length + ' 個單字' : ''}`;
+        : `完成${b.value.vocab.length ? '，' + b.value.vocab.length + ' 個單字' : ''}${c.value.events.length ? '，' + c.value.events.length + ' 個事件' : ''}`;
     }
   };
   await Promise.all([worker(), worker()]);
@@ -1049,8 +1099,8 @@ function dayCard(gid, date, msgs, sumRow, opt) {
   const rs = card.querySelector('[data-act=resum]');
   if (rs) rs.onclick = async () => {
     rs.disabled = true; rs.innerHTML = '<span class="spin"></span> 整理中';
-    const [a, b] = await Promise.allSettled([api('summarizeDay', { groupId: gid, date }), api('vocabDay', { groupId: gid, date })]);
-    if (a.status === 'rejected' || b.status === 'rejected') { rs.disabled = false; rs.textContent = '失敗，再試一次'; rs.title = errText((a.reason || b.reason)); return; }
+    const [a, b, c] = await Promise.allSettled([api('summarizeDay', { groupId: gid, date }), api('vocabDay', { groupId: gid, date }), api('eventsDay', { groupId: gid, date })]);
+    if ([a, b, c].some(x => x.status === 'rejected')) { rs.disabled = false; rs.textContent = '失敗，再試一次'; rs.title = errText((a.reason || b.reason || c.reason)); return; }
     GCACHE.delete(gid); await loadAll();
     if (opt.showGroup) openDate(date); else openGroup(gid, { date });
   };
@@ -1239,6 +1289,183 @@ async function doSearch() {
 }
 $('#btnSearch').onclick = doSearch;
 $('#sq').onkeydown = e => { if (e.key === 'Enter') doSearch(); };
+
+/* ================= 期間報告 ================= */
+let RP = null;
+function rpRange(q) {
+  const t = todayISO();
+  if (q === '7' || q === '14') return [addDays(t, -(+q) + 1), t];
+  const [y, m] = t.split('-').map(Number);
+  if (q === 'month') return [`${y}-${String(m).padStart(2, '0')}-01`, t];
+  const py = m === 1 ? y - 1 : y, pm = m === 1 ? 12 : m - 1;
+  const last = new Date(Date.UTC(py, pm, 0)).getUTCDate();
+  return [`${py}-${String(pm).padStart(2, '0')}-01`, `${py}-${String(pm).padStart(2, '0')}-${last}`];
+}
+document.querySelectorAll('[data-rq]').forEach(b => b.onclick = () => { const [f, t] = rpRange(b.dataset.rq); $('#rpFrom').value = f; $('#rpTo').value = t; rpCoverage(); });
+$('#rpFrom').onchange = $('#rpTo').onchange = () => rpCoverage();
+function rpSelGroups() { return [...document.querySelectorAll('#rpGroups input:checked')].map(i => i.value); }
+function renderReportTab() {
+  if (!$('#rpFrom').value) {
+    const days = Object.keys(DB.msgDays || {}).map(k => k.split('|')[1]).sort();
+    const end = days.length ? days[days.length - 1] : todayISO();
+    $('#rpTo').value = end; $('#rpFrom').value = addDays(end, -6);
+  }
+  const keep = new Set(rpSelGroups());
+  const withData = new Set(Object.keys(DB.msgDays || {}).map(k => k.split('|')[0]));
+  $('#rpGroups').innerHTML = DB.groups.filter(g => withData.has(g.id)).map(g =>
+    `<label class="gc"><input type="checkbox" value="${esc(g.id)}" ${keep.has(g.id) ? 'checked' : ''}>${esc(g.name)}</label>`).join('') || '<span class="hint">還沒有任何對話資料</span>';
+  $('#rpGroups').querySelectorAll('input').forEach(i => i.onchange = rpCoverage);
+  rpCoverage();
+  $('#rpList').innerHTML = '<tr><th>期間</th><th>對話群</th><th>產生時間</th><th>產生者</th></tr>' + (DB.reports || []).map(r =>
+    `<tr class="click" data-rp="${esc(r.id)}"><td>${esc(r.from)} ~ ${esc(r.to)}</td><td>${esc(rpGroupLabel(r.groups))}</td><td>${esc(r.created)}</td><td>${esc(r.user)}</td></tr>`).join('');
+  $('#rpList').querySelectorAll('[data-rp]').forEach(t => t.onclick = () => openReport(t.dataset.rp));
+}
+function rpGroupLabel(ids) {
+  const a = String(ids || '').split(',').filter(Boolean);
+  if (!a.length || a.length >= DB.groups.length) return '全部對話群';
+  return a.map(gname).join('、');
+}
+function rpDays() {
+  const f = $('#rpFrom').value, t = $('#rpTo').value, sel = rpSelGroups();
+  const out = [];
+  Object.entries(DB.msgDays || {}).forEach(([k, n]) => { const [g, d] = k.split('|'); if (d >= f && d <= t && (!sel.length || sel.includes(g))) out.push({ g, d, n, ev: !!(DB.evDays || {})[k] }); });
+  return out.sort((a, b) => a.d < b.d ? -1 : a.d > b.d ? 1 : 0);
+}
+function rpCoverage() {
+  const days = rpDays(), miss = days.filter(x => !x.ev);
+  const gs = [...new Set(days.map(x => x.g))];
+  $('#rpCov').innerHTML = !days.length ? '<span class="hint">這段期間沒有任何對話資料。</span>'
+    : `<span class="hint">這段期間有資料：${gs.length} 個對話群、${new Set(days.map(x => x.d)).size} 天、${days.length} 個「群組×日」。</span>` +
+      (miss.length ? ` <span class="hint" style="color:var(--warn)">其中 ${miss.length} 個還沒抽事件（產生報告時會先自動補抽）。</span>` : '');
+}
+async function backfillEvents(miss, info) {
+  let i = 0, done = 0, fail = 0;
+  const worker = async () => {
+    while (i < miss.length) {
+      const x = miss[i++];
+      try { await api('eventsDay', { groupId: x.g, date: x.d }); DB.evDays[x.g + '|' + x.d] = 1; done++; }
+      catch (e) { fail++; }
+      info(`補抽事件 ${done + fail}/${miss.length}…`);
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  return fail;
+}
+$('#btnReport').onclick = async () => {
+  const b = $('#btnReport'), inf = $('#rpInfo');
+  const f = $('#rpFrom').value, t = $('#rpTo').value;
+  if (!f || !t || f > t) { inf.textContent = '日期區間不對。'; return; }
+  const days = rpDays();
+  if (!days.length) { inf.textContent = '這段期間沒有資料。'; return; }
+  b.disabled = true;
+  try {
+    const miss = days.filter(x => !x.ev);
+    if (miss.length) {
+      const fail = await backfillEvents(miss, m => inf.innerHTML = '<span class="spin"></span> ' + esc(m));
+      if (fail) inf.innerHTML = `<span style="color:var(--warn)">${fail} 天補抽失敗，報告會少這幾天。</span> `;
+    }
+    inf.innerHTML += '<span class="spin"></span> 產生報告中（約半分鐘）…';
+    const r = await api('periodReport', { from: f, to: t, groups: rpSelGroups() });
+    inf.textContent = '完成。';
+    DB.reports.unshift({ id: r.report.id, from: f, to: t, created: r.report.created, user: ME.name, groups: r.report.groups.join(','), title: f + ' ~ ' + t });
+    renderReportTab(); showReport(r.report);
+  } catch (e) { inf.innerHTML = `<span style="color:var(--stop)">${esc(errText(e))}</span>`; }
+  finally { b.disabled = false; }
+};
+async function openReport(id) {
+  $('#rpView').innerHTML = '<div class="card"><span class="spin"></span> 載入報告…</div>';
+  try { const r = await api('reportGet', { id }); showReport(r.report); }
+  catch (e) { $('#rpView').innerHTML = `<div class="err">${esc(errText(e))}</div>`; }
+}
+const EV_LABEL = { deadline: '期限', decision: '決策', incident: '突發', personnel: '人員', asset: '船機設備' };
+const ST_LABEL = { open: '未完成', done: '已完成', cancelled: '取消', info: '', changed: '有變更' };
+function prepEvents(rep) {
+  const map = new Map(rep.events.map(e => [e.id, { ...e, also: [] }]));
+  (rep.merge || []).forEach(grp => {
+    const main = map.get(grp[0]); if (!main) return;
+    grp.slice(1).forEach(id => { const o = map.get(id); if (!o) return; o.hidden = true;
+      if (o.groupName !== main.groupName && !main.also.includes(o.groupName)) main.also.push(o.groupName);
+      main.msgsAlt = (main.msgsAlt || []).concat([{ group: o.group, src: o.src, msg: o.msgs[0] }]); });
+  });
+  (rep.updates || []).forEach(u => { const e = map.get(u.event); if (e) e.upd = u; });
+  (rep.highlights || []).forEach(id => { const e = map.get(id); if (e) e.hl = true; });
+  return map;
+}
+function evState(e) { return e.upd ? e.upd.status : e.status; }
+function evHTML(e, today) {
+  const st = evState(e), over = e.type === 'deadline' && e.date && e.date < today && st === 'open';
+  const showSt = e.type !== 'decision' && e.type !== 'asset';
+  return `<div class="ev${over ? ' over' : ''}${(st === 'done' || st === 'cancelled') && e.type === 'deadline' ? ' done' : ''}">
+    <div class="d">${esc(e.date || e.src)}${e.date ? '（' + wday(e.date) + '）' : ''}${!e.date ? '<div class="hint">提及日</div>' : ''}</div>
+    <div><span class="tt">${esc(e.title)}</span>${e.severity ? `<span class="pill ${e.severity}">${{ high: '嚴重', medium: '中', low: '輕' }[e.severity]}</span>` : ''}
+      ${showSt && ST_LABEL[st] ? `<span class="pill ${st === 'done' ? 'done' : ''}">${ST_LABEL[st]}</span>` : ''}${over ? '<span class="pill high">日期已過・未確認</span>' : ''}${e.hl ? '<span class="pill medium">需注意</span>' : ''}
+      <div>${esc(e.detail)}</div>
+      ${e.upd && e.upd.note ? `<div class="meta" style="color:var(--ok)">更新：${esc(e.upd.note)}</div>` : ''}
+      <div class="meta"><span class="pill g">${esc(e.groupName)}</span>${e.also.map(g => `<span class="pill g">${esc(g)}</span>`).join('')}
+        ${e.who ? ' ・ ' + esc(e.who) : ''}${e.date && e.src !== e.date ? ' ・ ' + esc(e.src.slice(5)) + ' 提到' : ''}${e.topic ? ' ・ #' + esc(e.topic) : ''}
+        <a class="ref" data-go="${esc(e.group)}|${esc(e.src)}|${esc(e.msgs[0] || '')}">↗原文</a></div></div></div>`;
+}
+function showReport(rep) {
+  RP = rep;
+  const today = todayISO(), map = prepEvents(rep), evs = [...map.values()].filter(e => !e.hidden);
+  const byType = t => evs.filter(e => e.type === t);
+  const sortD = (a, b) => ((a.date || a.src) < (b.date || b.src) ? -1 : (a.date || a.src) > (b.date || b.src) ? 1 : 0);
+  const dl = byType('deadline').sort(sortD);
+  const dated = dl.filter(e => e.date), undated = dl.filter(e => !e.date);
+  const wk = addDays(today, 7);
+  const bucket = (title, list) => list.length ? `<div class="hint" style="margin-top:8px;font-weight:700">${title}（${list.length}）</div>${list.map(e => evHTML(e, today)).join('')}` : '';
+  const sev = { high: 0, medium: 1, low: 2, '': 3 };
+  const inc = byType('incident').sort((a, b) => (sev[a.severity || ''] - sev[b.severity || '']) || sortD(a, b));
+  const cov = rep.coverage.filter(c => c.days.length), noData = rep.coverage.filter(c => !c.days.length);
+  const allDays = []; for (let d = rep.from; d <= rep.to; d = addDays(d, 1)) allDays.push(d);
+  const pr = { high: 0, medium: 1, low: 2 };
+  const threads = (rep.threads || []).slice().sort((a, b) => pr[a.priority] - pr[b.priority]);
+  const box = $('#rpView'); box.innerHTML = '';
+  const c = el('div', 'card');
+  c.innerHTML = `<div class="row" style="align-items:center"><h2 style="margin:0;flex:1">期間報告 ${esc(rep.from)} ~ ${esc(rep.to)}</h2>
+      <button class="btn ghost sm" id="rpCopy">複製成文字</button><button class="btn ghost sm" id="rpPrint">列印 / 存 PDF</button></div>
+    <div class="hint">產生於 ${esc(rep.created)}・${evs.length} 個事件（已合併重複）${rep.truncated ? '・<span style="color:var(--warn)">AI 回覆被截斷，議題可能不完整，可縮短期間重做</span>' : ''}</div>
+    <div class="rp-sec">資料涵蓋範圍<span class="n">報告只看得到有上傳的對話；灰色＝那天沒資料</span></div>
+    <div style="overflow-x:auto"><table class="covt"><tr><th></th>${allDays.map(d => `<th>${d.slice(5)}<br>${wday(d)}</th>`).join('')}</tr>
+      ${cov.map(g => `<tr><td class="l" title="${esc(g.name)}">${esc(g.name)}</td>${allDays.map(d => { const x = g.days.find(y => y.date === d);
+        return x ? `<td class="${x.events ? 'y' : 'p'}" title="${x.msgs} 則訊息">${x.msgs}</td>` : '<td></td>'; }).join('')}</tr>`).join('')}</table></div>
+    ${noData.length ? `<div class="hint" style="margin-top:4px" title="${esc(noData.map(g => g.name).join('、'))}">另外 ${noData.length} 個對話群這段期間沒有上傳資料（滑鼠移上來看名單）</div>` : ''}
+    <div class="rp-sec">整體走向</div><div style="white-space:pre-wrap">${esc(rep.overview || '（無）')}</div>
+    ${threads.length ? `<div class="rp-sec">跨群組議題<span class="n">同一件事在不同群組、不同天的討論串在一起</span></div>
+      ${threads.map(t => { const gs = [...new Set(t.events.concat(...t.timeline.map(s => s.events)).map(id => (map.get(id) || {}).groupName).filter(Boolean))];
+        return `<div class="thread ${t.priority}"><h4>${esc(t.topic)}<span class="pill ${t.priority}">${{ high: '高', medium: '中', low: '低' }[t.priority]}</span>${gs.map(g => `<span class="pill g">${esc(g)}</span>`).join('')}</h4>
+          <div><b>現況：</b>${esc(t.status)}</div>
+          <div class="tl">${t.timeline.map(s => `<div><b>${esc(s.date)}</b>${esc(s.text)} ${s.events.map(id => { const e = map.get(id); return e ? `<a class="ref" data-go="${esc(e.group)}|${esc(e.src)}|${esc(e.msgs[0] || '')}">↗</a>` : ''; }).join('')}</div>`).join('')}</div>
+          ${t.next ? `<div><b>下一步：</b>${esc(t.next)}</div>` : ''}</div>`; }).join('')}` : ''}
+    <div class="rp-sec">期限與時程<span class="n">紅字＝日期已過但對話中沒看到完成</span></div>
+    ${bucket('已過', dated.filter(e => e.date < today))}${bucket('今天起 7 天內', dated.filter(e => e.date >= today && e.date <= wk))}
+    ${bucket('之後', dated.filter(e => e.date > wk))}${bucket('日期未定', undated)}${dl.length ? '' : '<div class="hint">（無）</div>'}
+    <div class="rp-sec">突發與風險<span class="n">${inc.length}</span></div>${inc.map(e => evHTML(e, today)).join('') || '<div class="hint">（無）</div>'}
+    <div class="rp-sec">重要決策<span class="n">${byType('decision').length}</span></div>${byType('decision').sort(sortD).map(e => evHTML(e, today)).join('') || '<div class="hint">（無）</div>'}
+    <div class="rp-sec">人員異動<span class="n">${byType('personnel').length}</span></div>${byType('personnel').sort(sortD).map(e => evHTML(e, today)).join('') || '<div class="hint">（無）</div>'}
+    <div class="rp-sec">船舶・風機・設備<span class="n">${byType('asset').length}</span></div>${byType('asset').sort(sortD).map(e => evHTML(e, today)).join('') || '<div class="hint">（無）</div>'}
+    <div class="rp-sec">待追問的問題<span class="n">${(rep.questions || []).filter(q => !q.resolved).length} 個還沒答案${(rep.questions || []).some(q => q.resolved) ? '、' + rep.questions.filter(q => q.resolved).length + ' 個後來有答案' : ''}</span></div>
+    ${(rep.questions || []).slice().sort((a, b) => (!!a.resolved - !!b.resolved) || (a.date < b.date ? -1 : 1)).map(q => `<div class="ev${q.resolved ? ' done' : ''}"><div class="d">${esc(q.date)}</div><div><span class="tt" style="font-weight:400">${esc(q.zh)}</span>
+      ${q.resolved ? `<div class="meta" style="color:var(--ok)">後來的答案：${esc(q.resolved)}</div>` : ''}<div class="meta"><span class="pill g">${esc(q.groupName)}</span>
+      ${q.refs && q.refs[0] ? `<a class="ref" data-go="${esc(q.group)}|${esc(q.date)}|${esc(q.refs[0])}">↗原文</a>` : ''}</div></div></div>`).join('') || '<div class="hint">（無）</div>'}`;
+  box.append(c);
+  c.querySelectorAll('[data-go]').forEach(a => a.onclick = () => { const [g, d, m] = a.dataset.go.split('|'); tab('groups'); openGroup(g, { date: d, msg: m || null }); });
+  $('#rpCopy').onclick = async () => { try { await navigator.clipboard.writeText(reportText(rep, map)); $('#rpCopy').textContent = '已複製'; } catch (e) { $('#rpCopy').textContent = '複製失敗'; } setTimeout(() => $('#rpCopy') && ($('#rpCopy').textContent = '複製成文字'), 2000); };
+  $('#rpPrint').onclick = () => window.print();
+  c.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function reportText(rep, map) {
+  const today = todayISO(), evs = [...map.values()].filter(e => !e.hidden), NL = '\n';
+  const line = e => { const st = evState(e); return `・${e.date ? e.date.slice(5) + ' ' : ''}${e.title}${ST_LABEL[st] ? '（' + ST_LABEL[st] + '）' : ''}${e.type === 'deadline' && e.date && e.date < today && st === 'open' ? '【日期已過、未確認完成】' : ''}：${e.detail}〔${[e.groupName, ...e.also].join('、')}〕`; };
+  const sec = (t, list) => list.length ? NL + '【' + t + '】' + NL + list.map(line).join(NL) + NL : '';
+  const by = t => evs.filter(e => e.type === t).sort((a, b) => ((a.date || a.src) < (b.date || b.src) ? -1 : 1));
+  return '期間報告 ' + rep.from + ' ~ ' + rep.to + NL + '涵蓋對話群：' + rep.coverage.filter(c => c.days.length).map(c => c.name).join('、') + NL + NL +
+    '【整體走向】' + NL + rep.overview + NL +
+    ((rep.threads || []).length ? NL + '【跨群組議題】' + NL + rep.threads.map(t => '■ ' + t.topic + NL + '  現況：' + t.status + NL +
+      t.timeline.map(s => '  - ' + s.date + ' ' + s.text).join(NL) + (t.next ? NL + '  下一步：' + t.next : '')).join(NL) + NL : '') +
+    sec('期限與時程', by('deadline')) + sec('突發與風險', by('incident')) + sec('重要決策', by('decision')) + sec('人員異動', by('personnel')) + sec('船舶・風機・設備', by('asset')) +
+    ((rep.questions || []).some(q => !q.resolved) ? NL + '【待追問的問題】' + NL + rep.questions.filter(q => !q.resolved).map(q => '・' + q.date.slice(5) + ' ' + q.zh + '〔' + q.groupName + '〕').join(NL) : '');
+}
 
 /* ================= PNG 解碼(不受瀏覽器尺寸限制,串流逐段) ================= */
 function pngHeader(u8) {
