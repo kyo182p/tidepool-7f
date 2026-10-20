@@ -566,7 +566,7 @@ function clearUpload() {
   $('#attList').innerHTML = ''; $('#attInfo').textContent = ''; $('#attReview').innerHTML = '';
   $('#segs').innerHTML = ''; $('#upSegCard').classList.add('hide'); $('#upReview').classList.add('hide');
   $('#upStatus').textContent = ''; $('#ocrBar').style.width = '0'; $('#ocrInfo').textContent = ''; $('#sumProgress').innerHTML = '';
-  $('#btnOCR').disabled = false; $('#btnSave').disabled = false;
+  $('#btnOCR').disabled = false; $('#btnSave').disabled = false; $('#btnSave').textContent = '存檔並整理摘要';
 }
 $('#btnClear').onclick = () => { if (!UP.running) clearUpload(); };
 
@@ -709,8 +709,13 @@ $('#btnRetry').onclick = () => runOCR(true);
 function sameMsg(y, x, strict) {
   if (y.sender && x.sender && !x.inferS && !y.inferS && y.sender !== x.sender) return false;
   if (y.time && x.time && !x.inferT && !y.inferT && y.time !== x.time) return false;
+  // 只比內文:同一張截圖在兩個片段裡,AI 對附件的描述常常不一樣
   const a = y.norm, c = x.norm;
-  if (!a || !c) return a === c && !strict;
+  if (!a && !c) return y.attachments.length > 0 && x.attachments.length > 0 && (!strict || (!!y.time && y.time === x.time));
+  if (!a || !c) {
+    // 跨片的圖片訊息:上一片只看到圖(文字在下面被切掉),這一片看到圖的下半和文字
+    return !strict && y.attachments.length > 0 && x.attachments.length > 0 && (y.edge === 'bottom' || x.edge === 'top');
+  }
   if (a === c) return !strict || a.length >= 2;
   const min = strict ? 6 : 4;
   return a.length >= min && c.length >= min && (a.includes(c) || c.includes(a));
@@ -718,7 +723,7 @@ function sameMsg(y, x, strict) {
 function mergeInto(dup, x) {
   if (x.norm.length > dup.norm.length) { dup.text = x.text; dup.norm = x.norm; }
   if (!dup.quote && x.quote) dup.quote = x.quote;
-  if (x.attachments.length > dup.attachments.length) dup.attachments = x.attachments;
+  if (x.attachments.join('').length > dup.attachments.join('').length) dup.attachments = x.attachments;
   if (dup.inferS && x.sender && !x.inferS) { dup.sender = x.sender; dup.inferS = false; }
   if ((!dup.time || dup.inferT) && x.time && !x.inferT) { dup.time = x.time; dup.inferT = false; }
   if ((!dup.date || dup.inferD) && x.date && !x.inferD) { dup.date = x.date; dup.inferD = false; }
@@ -727,25 +732,33 @@ function assemble() {
   const out = []; let last = { sender: null, date: null, time: null }, prevTail = [];
   UP.segs.forEach((s, si) => {
     if (s.skip || s.state !== 'done' || !s.msgs) return;
-    const cur = s.msgs.map(m => ({ ...m, seg: si, attachments: m.attachments || [], norm: normT((m.text || '') + (m.attachments || []).join('')) }));
-    // 1) 找最長的 k:上一片最後 k 則 = 這一片前 k 則
-    let k = 0;
-    for (let t = Math.min(12, prevTail.length, cur.length); t >= 1; t--) {
-      let ok = true;
-      for (let i = 0; i < t && ok; i++) ok = sameMsg(prevTail[prevTail.length - t + i], cur[i], false);
-      if (ok) { k = t; break; }
+    const cur = s.msgs.map(m => ({ ...m, seg: si, attachments: m.attachments || [], norm: normT(m.text || '') }));
+    // 1) 找最長的 k:上一片最後 k 則 = 這一片從第 off 則起的 k 則
+    //    (片段最上面常有被切掉一半的東西,例如引用框或圖片下半部,所以允許跳過前 3 則)
+    let k = 0, off = 0;
+    for (let o = 0; o <= 3 && o < cur.length; o++) {
+      for (let t = Math.min(12, prevTail.length, cur.length - o); t > k; t--) {
+        let ok = true;
+        for (let i = 0; i < t && ok; i++) ok = sameMsg(prevTail[prevTail.length - t + i], cur[o + i], false);
+        if (ok) { k = t; off = o; break; }
+      }
     }
-    for (let i = 0; i < k; i++) mergeInto(prevTail[prevTail.length - k + i], cur[i]);
-    // 2) 對不齊時(某一片漏抄一則),只在頭尾 4 則內用嚴格條件比對
+    for (let i = 0; i < k; i++) mergeInto(prevTail[prevTail.length - k + i], cur[off + i]);
+    // 2) 對齊點之前的殘片:跟上一片尾巴像就併進去,被切到的就丟掉
     const fresh = [];
-    cur.slice(k).forEach((x, i) => {
-      if (k === 0 && i < 4) {
-        const y = prevTail.slice(-4).find(y => sameMsg(y, x, true));
+    cur.slice(0, k ? off : 0).forEach(x => {
+      const y = prevTail.slice(-8).find(y => sameMsg(y, x, false));
+      if (y) mergeInto(y, x); else if (x.edge !== 'top') fresh.push(x);
+    });
+    // 3) 對不齊時(某一片漏抄一則),在開頭 6 則內用嚴格條件比對
+    cur.slice(k ? off + k : 0).forEach((x, i) => {
+      if (k === 0 && i < 6) {
+        const y = prevTail.slice(-6).find(y => sameMsg(y, x, true));
         if (y) { mergeInto(y, x); return; }
       }
       fresh.push(x);
     });
-    if (k || fresh.length !== cur.length) { const t = out[out.length - 1]; if (t) last = { sender: t.sender, date: t.date, time: t.time }; }
+    if (fresh.length !== cur.length) { const t = out[out.length - 1]; if (t) last = { sender: t.sender, date: t.date, time: t.time }; }
     // 3) 沿用上一則
     fresh.forEach(x => {
       if (!x.sender) { x.sender = last.sender; x.inferS = true; }
@@ -882,6 +895,7 @@ async function resolveGroup() {
 }
 $('#btnSave').onclick = async () => {
   if (UP.running || !UP.msgs) return;
+  if (UP.saved) { $('#saveInfo').textContent = '這批已經存過了。要再存一次請先「清除重來」。'; return; }
   const live = UP.msgs.filter(m => !m.del);
   const doneAtts = UP.atts.filter(a => a.state === 'done');
   if (!live.length && !doneAtts.length) { $('#saveInfo').textContent = '沒有可以存的內容。'; return; }
@@ -905,6 +919,7 @@ $('#btnSave').onclick = async () => {
     $('#saveInfo').innerHTML = `已存檔：第 ${runNo(r.runId)} 次上傳，新增 ${r.newCount} 則（其餘 ${r.total - r.newCount} 則已存在，只記下出現紀錄）` +
       (r.attAdded ? `、附件 ${r.attAdded} 個` : '') + '。正在整理每日摘要與單字…';
     GCACHE.delete(gid);
+    UP.saved = true; $('#btnSave').textContent = '已存檔';
     await summarizeDates(gid, r.dates, prog);
     $('#saveInfo').innerHTML += ' 完成。';
     await loadAll();
@@ -913,7 +928,7 @@ $('#btnSave').onclick = async () => {
     prog.append(go);
   } catch (e) {
     $('#saveInfo').innerHTML = `<span style="color:var(--stop)">${esc(errText(e))}</span>`;
-  } finally { UP.running = false; $('#btnSave').disabled = false; }
+  } finally { UP.running = false; $('#btnSave').disabled = !!UP.saved; }
 };
 async function summarizeDates(gid, dates, prog) {
   const rows = {};
@@ -997,7 +1012,7 @@ function msgHTML(m, atts) {
   return `<div class="msg" data-msg="${esc(m.id)}"><div class="t">${esc(m.time || '')}</div><div class="s" title="${esc(m.sender)}">${esc(m.sender)}</div>
     <div><div class="x">${br(m.text)}</div>${m.quote ? `<div class="q">${br(m.quote)}</div>` : ''}${m.attach ? `<div class="a">${br(m.attach)}</div>` : ''}
       ${(atts || []).filter(a => a.msg === m.id).map(attChip).join(' ')}</div>
-    <div style="white-space:nowrap">${runs}</div></div>`;
+    <div style="white-space:nowrap">${runs}<button class="btn ghost sm" data-delmsg="${esc(m.id)}" title="刪除這則(辨識錯誤或重複時用)" style="margin-left:4px;padding:0 6px">✕</button></div></div>`;
 }
 function refLinks(refs) { return (refs || []).map(r => `<a class="ref" data-ref="${esc(r)}">↗原文</a>`).join(''); }
 function sumHTML(s) {
@@ -1043,7 +1058,17 @@ function dayCard(gid, date, msgs, sumRow, opt) {
   card.querySelectorAll('[data-v]').forEach(c => c.onclick = () => vocabPop(voc[+c.dataset.v]));
   card.querySelectorAll('[data-run]').forEach(a => a.onclick = () => { tab('runs'); openRun(a.dataset.run); });
   bindAtts(card);
+  bindDel(card, () => { GCACHE.delete(gid); if (opt.showGroup) openDate(date); else openGroup(gid, { date }); });
   return card;
+}
+function bindDel(root, after) {
+  root.querySelectorAll('[data-delmsg]').forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    if (!b.dataset.sure) { b.dataset.sure = '1'; b.textContent = '確定刪除？'; b.style.color = 'var(--stop)'; setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = '✕'; b.style.color = ''; } }, 4000); return; }
+    b.disabled = true;
+    try { await api('deleteMsg', { id: b.dataset.delmsg }); b.closest('.msg').remove(); after && after(); }
+    catch (err) { b.textContent = errText(err); }
+  });
 }
 function bindAtts(root) { root.querySelectorAll('[data-att]').forEach(c => c.onclick = e => { e.stopPropagation(); attModal(ATTS.get(c.dataset.att)); }); }
 function attModal(a) {

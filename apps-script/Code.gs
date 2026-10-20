@@ -20,7 +20,8 @@ const MODELS = {
 };
 // 每百萬 token 美元 [輸入, 輸出],只用來估算「用量」工作表
 const PRICE = { 'claude-opus-5-5': [5, 25], 'claude-sonnet-5-5': [3, 15], 'claude-haiku-4-5-20251001': [1, 5] };
-const MAX_TOKENS = { transcribe: 3500, summary: 3000, vocab: 2200, attach: 4000, match: 1000 };
+// 實測 Opus 約每秒 100 token;UrlFetchApp 約 60 秒逾時,所以單次輸出抓 4500 以內
+const MAX_TOKENS = { transcribe: 3500, summary: 4500, vocab: 3500, attach: 4000, match: 1000 };
 const ATT_FOLDER = '對話整理附件';   // 雲端硬碟資料夾名稱
 const MAX_IMAGES = 2;
 const TZ = 'Asia/Taipei';
@@ -505,7 +506,8 @@ const SUMMARY_SYSTEM = [
   '使用繁體中文(台灣用語)。英文專有名詞、公司名、人名保留英文。',
   '若當天對話有相當比例是英文(或主要內容由英文訊息傳達),bilingual 設為 true,每一條都要同時給 zh 與 en(en 為自然的英文);否則 bilingual=false、en 留空字串。',
   '每一條都要附 refs,列出依據的訊息編號(例如 ["m3","m7"])。',
-  '精簡:points 最多 8 條、todos 最多 10 條、decisions 最多 6 條、questions 最多 6 條,每條一兩句話。',
+  '精簡:points 最多 6 條、todos 最多 8 條、decisions 最多 5 條、questions 最多 5 條;每條中文 60 字以內、英文 40 字以內,同一件事只寫一次(寫在 points 的不要在 decisions 重複)。',
+  'refs 每條最多 3 個,挑最關鍵的訊息。',
   'todos 是有人要去做的事:who 填負責人(對話中看得出來才填,否則空字串),due 填期限(YYYY-MM-DD 或原文說法,沒有就空字串)。',
   'decisions 是已經拍板的結論;questions 是還沒結論、需要追問的事。',
   '只輸出 JSON:',
@@ -548,9 +550,9 @@ function summarizeDay(user, req) {
 /* ===== 4. 英文單字(給 Tina 練習) ===== */
 const VOCAB_SYSTEM = [
   '你是職場英文老師,學生是在台灣風電運維公司做現場協調(AOC)的同仁。',
-  '從一天的 Teams 對話中,挑出值得學的英文單字或片語(包含中文訊息裡夾雜的英文,例如 onboarding、charge back、induction、rotation),最多 12 個。',
+  '從一天的 Teams 對話中,挑出值得學的英文單字或片語(包含中文訊息裡夾雜的英文,例如 onboarding、charge back、induction、rotation),最多 10 個。',
   '優先:工作上常用、對話裡真的出現、學生可能不熟的。不要挑人名、公司名、地名、太簡單的字(ok、yes、team)。',
-  '每個給:term(對話中的原形或片語)、pos(詞性,英文縮寫如 n./v./phr.)、zh(簡短中文意思)、explain(一兩句繁體中文說明在這個情境的用法)、example(對話中出現的原句,照抄)、example_zh(原句的中文翻譯)、ref(出處訊息編號,如 "m12")。',
+  '每個給:term(對話中的原形或片語)、pos(詞性,英文縮寫如 n./v./phr.)、zh(簡短中文意思)、explain(繁體中文 50 字以內,說明在這個情境的用法)、example(對話中出現的原句,照抄;句子太長就只抄含這個字的那一句)、example_zh(原句的中文翻譯)、ref(出處訊息編號,如 "m12")。',
   '只輸出 JSON:{"vocab":[{"term":"","pos":"","zh":"","explain":"","example":"","example_zh":"","ref":""}]}',
   '如果當天完全沒有英文,輸出 {"vocab":[]}。',
 ].join('\n');
