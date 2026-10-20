@@ -15,10 +15,13 @@ const MODELS = {
   transcribe: 'claude-opus-5-5',   // 看截圖轉逐字稿,精準最重要
   summary:    'claude-opus-5-5',   // 每日摘要(中英對照)
   vocab:      'claude-opus-5-5',   // 英文單字擷取
+  attach:     'claude-opus-5-5',   // 附件(圖片、PDF)內容擷取
+  match:      'claude-opus-5-5',   // 附件配對到訊息
 };
 // 每百萬 token 美元 [輸入, 輸出],只用來估算「用量」工作表
 const PRICE = { 'claude-opus-5-5': [5, 25], 'claude-sonnet-5-5': [3, 15], 'claude-haiku-4-5-20251001': [1, 5] };
-const MAX_TOKENS = { transcribe: 3500, summary: 3000, vocab: 2200 };
+const MAX_TOKENS = { transcribe: 3500, summary: 3000, vocab: 2200, attach: 4000, match: 1000 };
+const ATT_FOLDER = '對話整理附件';   // 雲端硬碟資料夾名稱
 const MAX_IMAGES = 2;
 const TZ = 'Asia/Taipei';
 
@@ -29,6 +32,7 @@ const SHEETS = {
   sums:   { name: '摘要',     head: ['群組ID', '日期', '更新時間', '模型', '標題', '重點', 'JSON'] },
   vocab:  { name: '單字',     head: ['單字', '中文', '說明', '例句', '群組ID', '日期', '訊息ID', '上傳ID', '建立時間'] },
   runs:   { name: '上傳紀錄', head: ['上傳ID', '時間', '使用者', '群組ID', '檔名', '截圖日期', '片數', '訊息數', '新增訊息', '最早日期', '最新日期'] },
+  atts:   { name: '附件',     head: ['附件ID', '群組ID', '訊息ID', '日期', '檔名', '類型', '檔案ID', '雲端連結', '標題', '內容', '上傳ID', '建立時間'] },
   usage:  { name: '用量',     head: ['時間', '使用者', '動作', '模型', '圖片數', '輸入token', '輸出token', '估計美元'] },
 };
 
@@ -78,6 +82,7 @@ function setup() {
     const rows = SEED_GROUPS.map((n, i) => ['g' + String(i + 1).padStart(3, '0'), n, '', now, 'TRUE', '0', '', '']);
     groups.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
   }
+  attFolder();   // 順便建立雲端硬碟資料夾(第一次會要求雲端硬碟權限)
   Logger.log('完成。代碼請看「使用者」工作表。');
 }
 
@@ -103,6 +108,9 @@ function doPost(e) {
       case 'runData':      return out(runData(req));
       case 'search':       return out(search(req));
       case 'deleteMsg':    return out(deleteMsg(req));
+      case 'readAttachment':   return out(readAttachment(user, req));
+      case 'matchAttachments': return out(matchAttachments(user, req));
+      case 'attGet':       return out(attGet(req));
     }
     return out({ ok: false, code: 'bad_action' });
   } catch (err) {
@@ -360,7 +368,9 @@ function saveRun(user, req) {
     const appends = [];
     let newCount = 0, changed = false;
     const dates = {};
-    for (const m of incoming) {
+    const resIds = [];
+    for (let idx = 0; idx < incoming.length; idx++) {
+      const m = incoming[idx] || {};
       const quote = m.quote && (m.quote.text || m.quote.sender)
         ? clip((m.quote.sender || '') + (m.quote.when ? ' ' + m.quote.when : '') + ':' + (m.quote.text || ''), 4000) : '';
       const attach = Array.isArray(m.attachments) ? clip(m.attachments.join('\n'), 6000) : clip(m.attach || '', 6000);
@@ -393,6 +403,7 @@ function saveRun(user, req) {
         if (norm(o.text).length > norm(hit.text).length) { hit.text = o.text; hit.arr[5] = o.text; changed = true; }
         if (!hit.arr[7] && o.attach) { hit.arr[7] = o.attach; changed = true; }
         if (!hit.arr[6] && o.quote) { hit.arr[6] = o.quote; changed = true; }
+        resIds[idx] = hit.id;
         continue;
       }
       let nid = id;
@@ -400,6 +411,7 @@ function saveRun(user, req) {
       const arr = [nid, g.id, o.date, o.time, o.sender, o.text, o.quote, o.attach, o.lang, runId, runId, now];
       appends.push(arr);
       index({ id: nid, date: o.date, time: o.time, sender: o.sender, text: o.text, attach: o.attach, runs: runId, arr, fresh: true });
+      resIds[idx] = nid;
       newCount++;
     }
     if (changed && data.length) {
@@ -408,6 +420,30 @@ function saveRun(user, req) {
       sh.getRange(2, 11, data.length, 1).setValues(data.map(r => [r[10]]));
     }
     appendRows('msgs', appends);
+
+    // 附件:對到這次存的訊息(或只掛在某一天)
+    const attIn = Array.isArray(req.attachments) ? req.attachments : [];
+    let attAdded = 0;
+    if (attIn.length) {
+      const old = readAll('atts');
+      let maxA = 0;
+      old.forEach(r => { const n = parseInt(String(r[0]).replace(/\D/g, ''), 10); if (n > maxA) maxA = n; });
+      const seen = {};
+      old.forEach(r => { if (r[1] === g.id) seen[r[6]] = true; });
+      const rows = [];
+      attIn.forEach(a => {
+        if (!a || !a.fileId || seen[a.fileId]) return;
+        const mi = (a.msg === null || a.msg === undefined || a.msg === '') ? -1 : +a.msg;
+        const mid = mi >= 0 ? (resIds[mi] || '') : '';
+        const date = validDate(mi >= 0 && incoming[mi] ? incoming[mi].date : a.date) || validDate(a.date);
+        if (date) dates[date] = true;
+        seen[a.fileId] = true;
+        rows.push(['a' + String(++maxA).padStart(5, '0'), g.id, mid, date, clip(a.name || '', 200), clip(a.mime || '', 80),
+          clip(a.fileId, 100), clip(a.url || '', 300), clip(a.title || '', 300), clip(a.content || '', 45000), runId, now]);
+      });
+      appendRows('atts', rows);
+      attAdded = rows.length;
+    }
 
     // 群組統計
     let cnt = 0, first = '', last = '';
@@ -421,7 +457,7 @@ function saveRun(user, req) {
     const ds = Object.keys(dates).sort();
     appendRows('runs', [[runId, now, user.name, g.id, clip(req.fileName || '', 300), validDate(req.captureDate),
       String(req.segments || ''), String(incoming.length), String(newCount), ds[0] || '', ds[ds.length - 1] || '']]);
-    return { ok: true, runId, newCount, total: incoming.length, dates: ds };
+    return { ok: true, runId, newCount, total: incoming.length, dates: ds, attAdded };
   } finally { lock.releaseLock(); }
 }
 
@@ -435,13 +471,25 @@ function dayMessages(gid, date) {
 function rowToMsg(r, i) {
   return { id: r[0], group: r[1], date: r[2], time: r[3], sender: r[4], text: r[5], quote: r[6], attach: r[7], lang: r[8], firstRun: r[9], runs: r[10], i };
 }
-function linesFor(list) {
-  return list.map((m, k) => {
+function dayAtts(gid, date) {
+  return readAll('atts').filter(r => r[1] === gid && r[3] === date).map(attOut);
+}
+function attOut(r) {
+  return { id: r[0], group: r[1], msg: r[2], date: r[3], name: r[4], mime: r[5], fileId: r[6], url: r[7], title: r[8], content: r[9], run: r[10], created: r[11] };
+}
+function linesFor(list, atts) {
+  atts = atts || [];
+  const ids = {}; list.forEach(m => ids[m.id] = true);
+  let out = list.map((m, k) => {
     let s = '[m' + (k + 1) + '] ' + (m.time || '--:--') + ' ' + m.sender + ':' + m.text;
     if (m.quote) s += '\n    (引用 ' + m.quote + ')';
     if (m.attach) s += '\n    (附件 ' + m.attach.replace(/\n/g, ' / ') + ')';
+    atts.filter(a => a.msg === m.id).forEach(a => { s += '\n    (附件原檔「' + a.title + '」內容:\n' + clip(a.content, 4000) + '\n    )'; });
     return s;
   }).join('\n');
+  const loose = atts.filter(a => !ids[a.msg]);
+  if (loose.length) out += '\n\n當天另外附上的檔案:\n' + loose.map(a => '[附件]「' + a.title + '」\n' + clip(a.content, 4000)).join('\n');
+  return out;
 }
 function mapRefs(refs, list) {
   return (Array.isArray(refs) ? refs : [refs]).map(x => {
@@ -467,9 +515,9 @@ const SUMMARY_SYSTEM = [
 function summarizeDay(user, req) {
   const g = findGroup(req.groupId); if (!g) throw { code: 'bad_group' };
   const date = validDate(req.date); if (!date) throw { code: 'bad_request', message: '日期格式錯誤' };
-  const list = dayMessages(g.id, date);
-  if (!list.length) throw { code: 'no_messages', message: '這一天沒有訊息' };
-  const prompt = '對話群:' + g.name + '\n日期:' + date + '\n共 ' + list.length + ' 則訊息:\n\n' + clip(linesFor(list), 120000);
+  const list = dayMessages(g.id, date), atts = dayAtts(g.id, date);
+  if (!list.length && !atts.length) throw { code: 'no_messages', message: '這一天沒有訊息' };
+  const prompt = '對話群:' + g.name + '\n日期:' + date + '\n共 ' + list.length + ' 則訊息:\n\n' + clip(linesFor(list, atts), 120000);
   const r = callClaude(user, 'summary', MODELS.summary, [{ type: 'text', text: prompt }], MAX_TOKENS.summary, SUMMARY_SYSTEM, 0);
   const j = parseLoose(r.text);
   if (!j) throw { code: 'bad_ai', message: 'AI 回傳的摘要解析失敗' };
@@ -510,10 +558,10 @@ const VOCAB_SYSTEM = [
 function vocabDay(user, req) {
   const g = findGroup(req.groupId); if (!g) throw { code: 'bad_group' };
   const date = validDate(req.date); if (!date) throw { code: 'bad_request', message: '日期格式錯誤' };
-  const list = dayMessages(g.id, date);
+  const list = dayMessages(g.id, date), atts = dayAtts(g.id, date);
   let items = [];
-  if (list.some(m => /[A-Za-z]{3,}/.test(m.text + m.quote))) {
-    const prompt = '對話群:' + g.name + '\n日期:' + date + '\n\n' + clip(linesFor(list), 120000);
+  if (list.some(m => /[A-Za-z]{3,}/.test(m.text + m.quote)) || atts.some(a => /[A-Za-z]{3,}/.test(a.content))) {
+    const prompt = '對話群:' + g.name + '\n日期:' + date + '\n\n' + clip(linesFor(list, atts), 120000);
     const r = callClaude(user, 'vocab', MODELS.vocab, [{ type: 'text', text: prompt }], MAX_TOKENS.vocab, VOCAB_SYSTEM, 0);
     const j = parseLoose(r.text);
     if (!j) throw { code: 'bad_ai', message: 'AI 回傳的單字解析失敗' };
@@ -558,14 +606,16 @@ function groupData(req) {
   const msgs = [];
   readAll('msgs').forEach((r, i) => { if (r[1] === gid) msgs.push(rowToMsg(r, i)); });
   const sums = readAll('sums').filter(r => r[0] === gid).map(sumOut);
-  return { ok: true, messages: msgs, summaries: sums };
+  const atts = readAll('atts').filter(r => r[1] === gid).map(attOut);
+  return { ok: true, messages: msgs, summaries: sums, atts };
 }
 function dateData(req) {
   const d = validDate(req.date);
   const msgs = [];
   readAll('msgs').forEach((r, i) => { if (r[2] === d) msgs.push(rowToMsg(r, i)); });
   const sums = readAll('sums').filter(r => r[1] === d).map(sumOut);
-  return { ok: true, messages: msgs, summaries: sums };
+  const atts = readAll('atts').filter(r => r[3] === d).map(attOut);
+  return { ok: true, messages: msgs, summaries: sums, atts };
 }
 function sumOut(r) {
   let s = null; try { s = JSON.parse(r[6]); } catch (e) {}
@@ -575,7 +625,8 @@ function runData(req) {
   const id = String(req.runId || '');
   const msgs = [];
   readAll('msgs').forEach((r, i) => { if (String(r[10]).split(',').indexOf(id) >= 0) msgs.push(rowToMsg(r, i)); });
-  return { ok: true, messages: msgs };
+  const atts = readAll('atts').filter(r => r[10] === id).map(attOut);
+  return { ok: true, messages: msgs, atts };
 }
 function search(req) {
   const q = String(req.q || '').trim().toLowerCase();
@@ -587,7 +638,8 @@ function search(req) {
     const hay = (r[4] + ' ' + r[5] + ' ' + r[6] + ' ' + r[7]).toLowerCase();
     if (terms.every(t => hay.indexOf(t) >= 0)) out.push(rowToMsg(r, i));
   });
-  return { ok: true, messages: out };
+  const atts = readAll('atts').filter(r => terms.every(t => (r[4] + ' ' + r[8] + ' ' + r[9]).toLowerCase().indexOf(t) >= 0)).slice(0, 100).map(attOut);
+  return { ok: true, messages: out, atts };
 }
 function deleteMsg(req) {
   const id = String(req.id || '');
@@ -602,4 +654,83 @@ function deleteMsg(req) {
     if (g) sheet('groups').getRange(g.row, 6).setValue(String(Math.max(0, g.count - 1)));
     return { ok: true, deleted: 1 };
   } finally { lock.releaseLock(); }
+}
+
+/* ===== 6. 附件(圖片、PDF) ===== */
+function attFolder() {
+  const props = PropertiesService.getScriptProperties();
+  const id = props.getProperty('ATT_FOLDER_ID');
+  if (id) { try { return DriveApp.getFolderById(id); } catch (e) {} }
+  const f = DriveApp.createFolder(ATT_FOLDER);
+  props.setProperty('ATT_FOLDER_ID', f.getId());
+  return f;
+}
+
+const ATTACH_SYSTEM = [
+  '你是資料擷取員。輸入是 Microsoft Teams 對話裡分享的附件(截圖、照片或 PDF),來自台灣風電運維現場協調(AOC)的工作對話。',
+  '把附件裡的資訊完整擷取成文字,讓之後不看原圖也知道內容:',
+  '- 表格:轉成 Markdown 表格,保留所有欄位與列,人名、日期、數字、代碼一個都不能漏。',
+  '- 名單、清單:逐行列出。',
+  '- 信件、訊息截圖:寄件者、收件者、日期、主旨,以及內文(重要段落照抄)。',
+  '- 文件(PDF、證書、報告):標題、對象、日期、有效期限、重點內容。',
+  '- 照片:描述看到的東西與可辨識的文字。',
+  '照原文語言抄寫,不要翻譯;看不清楚的地方寫「(看不清楚)」,不要猜。',
+  'title 用繁體中文一句話描述這個附件(例如「Muehlhan 葉片組 10/22 最新名單」)。',
+  '只輸出 JSON:{"title":"","content":""}(content 內可以用 \\n 與 Markdown)',
+].join('\n');
+
+function readAttachment(user, req) {
+  const name = clip(req.name || '附件', 200), mime = String(req.mime || '');
+  const isPdf = mime === 'application/pdf';
+  if (!isPdf && !/^image\//.test(mime)) throw { code: 'bad_request', message: '只支援圖片和 PDF' };
+  if (!req.original) throw { code: 'bad_request', message: '沒有檔案內容' };
+  let content;
+  if (isPdf) content = [{ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: String(req.original) } }];
+  else {
+    const imgs = (Array.isArray(req.images) ? req.images : []).slice(0, 4);
+    if (!imgs.length) throw { code: 'bad_request', message: '沒有圖片' };
+    content = imgs.map(b => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: String(b) } }));
+  }
+  const n = isPdf ? 0 : content.length;
+  content.push({ type: 'text', text: '檔名:' + name + (n > 1 ? '\n這張圖很長,已切成 ' + n + ' 段,依序由上而下,相鄰段落有重疊。' : '') + '\n請擷取內容。' });
+  const r = callClaude(user, 'attach', MODELS.attach, content, MAX_TOKENS.attach, ATTACH_SYSTEM, n);
+  const j = parseLoose(r.text) || {};
+  // AI 成功才存原檔,避免失敗重試時重複存
+  const file = attFolder().createFile(Utilities.newBlob(Utilities.base64Decode(String(req.original)), mime,
+    Utilities.formatDate(new Date(), TZ, 'yyyyMMdd_HHmmss') + '_' + name));
+  return { ok: true, fileId: file.getId(), url: file.getUrl(), title: clip(j.title || name, 300),
+    content: clip(j.content || r.text || '', 45000), truncated: r.truncated };
+}
+
+const MATCH_SYSTEM = [
+  '你要把附件配對到它在 Teams 對話裡出現的那一則訊息。',
+  '訊息裡的「附件描述」是從對話縮圖看到的內容(可能不完整);附件內容是原檔擷取的完整內容。',
+  '依內容(人名、日期、標題、表格欄位)、發言脈絡判斷。不確定就填 null,不要硬配。',
+  '一則訊息可以有多個附件。',
+  '只輸出 JSON:{"pairs":[{"att":0,"msg":12}]}',
+].join('\n');
+
+function matchAttachments(user, req) {
+  const cands = (Array.isArray(req.cands) ? req.cands : []).slice(0, 250);
+  const atts = (Array.isArray(req.atts) ? req.atts : []).slice(0, 30);
+  if (!cands.length || !atts.length) return { ok: true, pairs: [] };
+  const lines = ['訊息:'];
+  cands.forEach(c => lines.push('#' + c.i + ' ' + (c.date || '') + ' ' + (c.time || '') + ' ' + clip(c.sender, 60) + ':' +
+    clip(c.text, 200).replace(/\n/g, ' ') + (c.attach ? '  【附件描述】' + clip(c.attach, 400).replace(/\n/g, ' ') : '')));
+  lines.push('', '附件:');
+  atts.forEach(a => lines.push('附件' + a.j + ' 檔名 ' + clip(a.name, 100) + '「' + clip(a.title, 200) + '」:' + clip(a.content, 800).replace(/\n/g, ' ')));
+  const r = callClaude(user, 'match', MODELS.match, [{ type: 'text', text: lines.join('\n') }], MAX_TOKENS.match, MATCH_SYSTEM, 0);
+  const j = parseLoose(r.text) || {};
+  const ok = {}; cands.forEach(c => ok[c.i] = true);
+  const pairs = (Array.isArray(j.pairs) ? j.pairs : []).map(p => ({
+    att: parseInt(p.att, 10), msg: p.msg === null || p.msg === undefined || !ok[parseInt(p.msg, 10)] ? null : parseInt(p.msg, 10),
+  })).filter(p => p.att >= 0);
+  return { ok: true, pairs };
+}
+
+function attGet(req) {
+  const row = readAll('atts').find(r => r[0] === String(req.id || ''));
+  if (!row) throw { code: 'bad_request', message: '找不到附件' };
+  const blob = DriveApp.getFileById(row[6]).getBlob();
+  return { ok: true, mime: blob.getContentType() || row[5], name: row[4], data: Utilities.base64Encode(blob.getBytes()) };
 }

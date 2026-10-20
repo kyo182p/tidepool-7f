@@ -9,6 +9,7 @@ Internal single-page tool. 靜態網頁（GitHub Pages）＋ Google Apps Script 
 3. 網頁把相鄰片段的重疊區對齊去重，給使用者校對、改字、刪錯誤訊息，然後存檔。
 4. 後端依「對話群 × 日期」整理每日摘要（英文為主的對話給中英對照），並擷取英文單字給練習用。
 5. 每則訊息記錄「是第幾次上傳出現的」，可以從摘要、單字、搜尋結果一路點回原文與上傳紀錄。
+6. 附加檔案（對話裡的圖片、PDF）：用原解析度擷取內容（表格、名單、信件），原檔存到雲端硬碟「對話整理附件」資料夾，AI 先配對到所屬訊息、校對時可改；摘要會把附件內容算進去。
 
 ## 試算表工作表
 
@@ -19,6 +20,7 @@ Internal single-page tool. 靜態網頁（GitHub Pages）＋ Google Apps Script 
 | 訊息 | 每則訊息一列；「出現的上傳」記錄每次上傳 ID |
 | 摘要 | 對話群 × 日期一列，JSON 欄是完整摘要 |
 | 單字 | 每個單字一列，含例句、出處訊息、上傳 ID |
+| 附件 | 每個附件一列：對應的訊息、雲端硬碟檔案、擷取內容 |
 | 上傳紀錄 | 每次上傳一列 |
 | 用量 | 每次 AI 呼叫的 token 與估計美元 |
 
@@ -26,7 +28,7 @@ Internal single-page tool. 靜態網頁（GitHub Pages）＋ Google Apps Script 
 
 1. **API Key**：platform.claude.com → Create Key（可沿用 family-quiz 那把）。
 2. **試算表＋Apps Script**：新增一份試算表 → 擴充功能 → Apps Script → 把 `apps-script/Code.gs` 整份貼上 → 選 `setup` 執行 → 授權。
-   - 會建立所有工作表、兩組代碼（「使用者」工作表）、16 個預先建好的對話群（依 Tina 的 Teams 側欄）。
+   - 會建立所有工作表、兩組代碼（「使用者」工作表）、16 個預先建好的對話群（依 Tina 的 Teams 側欄），以及雲端硬碟的「對話整理附件」資料夾（第一次會要求雲端硬碟權限）。
 3. **指令碼屬性**：專案設定 → 指令碼屬性 → 新增 `ANTHROPIC_API_KEY`。
 4. **部署**：部署 → 新增部署作業 → 類型「網頁應用程式」→ 執行身分「我」→ 誰可以存取「所有人」→ 複製 `/exec` 網址。
 5. **前端**：`index.html` 裡 `const CONFIG = { API_URL: '' };` 填入 `/exec` 網址 → push → repo 設定 Pages（main / root）。
@@ -36,7 +38,7 @@ Internal single-page tool. 靜態網頁（GitHub Pages）＋ Google Apps Script 
 
 - 改 `index.html`：push 後幾分鐘生效。
 - 改 `Code.gs`：部署 → **管理部署作業 → 編輯（鉛筆）→ 版本：新版本 → 部署**（網址不變；不要「新增部署作業」）。
-- `setup()` 可以重複執行，只補缺的部分。
+- `setup()` 可以重複執行，只補缺的部分。新版程式用到新權限（例如雲端硬碟）時，貼上後先在編輯器執行一次 `setup` 完成授權，再部署新版本。
 
 ## 限制與參數
 

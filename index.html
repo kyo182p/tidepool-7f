@@ -126,6 +126,16 @@ table.list{width:100%;border-collapse:collapse;font-size:13px}
 table.list td,table.list th{border-bottom:1px solid var(--rule-2);padding:6px;text-align:left}
 table.list tr.click{cursor:pointer}
 table.list tr.click:hover{background:var(--sunk)}
+.seg.att .pic{height:110px;display:flex;align-items:center;justify-content:center}
+.seg .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.attrow{display:grid;grid-template-columns:90px 1fr;gap:12px;padding:8px 0;border-bottom:1px solid var(--rule-2)}
+.attrow .th{width:90px;height:90px;border:1px solid var(--rule);border-radius:4px;overflow:hidden;display:flex;align-items:center;justify-content:center;background:#fff;font-size:34px}
+.attrow .th img{width:100%;height:100%;object-fit:cover;object-position:top}
+.attrow select{max-width:100%}
+.chip.att{background:var(--navy-soft);border-color:var(--navy-soft);color:var(--navy)}
+.md{font-size:13.5px;line-height:1.6}
+.md table.bi{margin:6px 0}
+details>summary{cursor:pointer;color:var(--navy);font-size:12.5px}
 .spin{display:inline-block;width:12px;height:12px;border:2px solid var(--rule);border-top-color:var(--buoy);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
 @keyframes sp{to{transform:rotate(360deg)}}
 </style>
@@ -166,6 +176,13 @@ table.list tr.click:hover{background:var(--sunk)}
         <input type="file" id="file" accept="image/*" multiple class="hide">
       </div>
       <div id="upStatus" class="hint" style="margin-top:6px"></div>
+      <div class="drop" id="attDrop" style="margin-top:10px;padding:16px">
+        <b>📎 附加檔案（選填）：對話裡的圖片、PDF</b>
+        <div class="hint">在 Teams 對圖片按右鍵「另存」、或下載 PDF，再拖進這裡。會用原解析度讀內容、存到雲端硬碟，並自動配對到它所屬的那則訊息。</div>
+        <input type="file" id="attFile" accept="image/*,application/pdf,.pdf" multiple class="hide">
+      </div>
+      <div id="attInfo" class="hint" style="margin-top:4px"></div>
+      <div class="segs" id="attList"></div>
     </div>
 
     <div class="card hide" id="upSegCard">
@@ -185,6 +202,7 @@ table.list tr.click:hover{background:var(--sunk)}
       <h2>3. 校對逐字稿，然後存檔</h2>
       <div class="hint">文字可以直接點進去改；✕ 刪除辨識錯的訊息；日期旁的欄位可以整天一起改日期。「推定」表示是依前後文推出來的。</div>
       <div class="row" style="margin-top:10px" id="grpPick"></div>
+      <div id="attReview"></div>
       <div id="reviewList"></div>
       <div class="row" style="margin-top:12px">
         <button class="btn warn" id="btnSave">存檔並整理摘要</button>
@@ -357,7 +375,8 @@ function tab(name) {
 document.querySelectorAll('#nav button').forEach(b => b.onclick = () => tab(b.dataset.tab));
 
 /* ================= 1. 上傳與分段 ================= */
-let UP = { files: [], segs: [], msgs: null, title: null, running: false };
+let UP = { files: [], segs: [], atts: [], msgs: null, title: null, running: false };
+const ATTS = new Map();   // 已存檔附件(id → 附件),給點開用
 $('#upDate').value = todayISO();
 function fillGroupSelect() {
   const s = $('#upGroup'), keep = s.value;
@@ -372,8 +391,11 @@ document.addEventListener('dragleave', e => { if (!e.relatedTarget) drop.classLi
 document.addEventListener('drop', e => {
   e.preventDefault(); drop.classList.remove('over');
   if ($('#tab-upload').classList.contains('hide')) return;
-  addFiles(e.dataTransfer.files);
+  if (e.target.closest && e.target.closest('#attDrop')) addAtts(e.dataTransfer.files);
+  else addFiles(e.dataTransfer.files);
 });
+$('#attDrop').onclick = () => $('#attFile').click();
+$('#attFile').onchange = () => { addAtts($('#attFile').files); $('#attFile').value = ''; };
 fileIn.onchange = () => { addFiles(fileIn.files); fileIn.value = ''; };
 document.addEventListener('paste', e => {
   if ($('#tab-upload').classList.contains('hide')) return;
@@ -401,6 +423,106 @@ async function addFiles(list) {
   $('#upStatus').textContent = `共 ${UP.files.length} 個檔案、${UP.segs.length} 個片段。`;
   renderSegs();
 }
+/* ---------- 附加檔案 ---------- */
+const isPdf = f => f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+async function addAtts(list) {
+  if (UP.running) return;
+  const files = [...list].filter(f => isImg(f) || isPdf(f));
+  if (!files.length) { $('#attInfo').textContent = '只接受圖片或 PDF。'; return; }
+  const skipped = [];
+  for (const f of files) {
+    if (f.size > 20 * 1048576) { skipped.push(f.name); continue; }
+    const pdf = isPdf(f);
+    UP.atts.push({ file: f, name: f.name || '貼上的圖片', mime: pdf ? 'application/pdf' : (f.type || 'image/png'), pdf,
+      url: pdf ? null : URL.createObjectURL(f), state: '', msg: null, date: '' });
+  }
+  $('#attInfo').textContent = `附件 ${UP.atts.length} 個` + (skipped.length ? `（${skipped.join('、')} 超過 20 MB，略過）` : '') +
+    (UP.msgs ? '。已經辨識過了，請再按一次「開始辨識」讀取新加的附件。' : '');
+  $('#upSegCard').classList.remove('hide');
+  renderAtts();
+}
+function attState(a) {
+  return a.state === 'run' ? '<span class="st run">讀取中</span>' : a.state === 'done' ? '<span class="st done">已讀</span>'
+    : a.state === 'fail' ? `<span class="st fail" title="${esc(errText(a.err))}">失敗</span>` : '<span class="st">待讀取</span>';
+}
+function renderAtts() {
+  const box = $('#attList'); box.innerHTML = '';
+  UP.atts.forEach((a, i) => {
+    const d = el('div', 'seg att');
+    d.innerHTML = `<div class="pic">${a.pdf ? '<span style="font-size:40px">📄</span>' : `<img src="${a.url}" alt="">`}</div>
+      <div class="bar"><span class="nm" title="${esc(a.name)}">${esc(a.name)}</span>${attState(a)}<button class="btn ghost sm" data-arm="${i}" title="移除">✕</button></div>
+      ${a.title ? `<div class="hint" style="margin-top:3px">${esc(a.title)}</div>` : ''}`;
+    box.append(d);
+  });
+  box.querySelectorAll('[data-arm]').forEach(b => b.onclick = () => {
+    if (UP.running) return;
+    const a = UP.atts.splice(+b.dataset.arm, 1)[0]; if (a && a.url) URL.revokeObjectURL(a.url);
+    renderAtts(); if (UP.msgs) renderReview();
+  });
+}
+async function fileB64(blob) {
+  const u8 = new Uint8Array(await blob.arrayBuffer()); let s = '';
+  for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+async function attImages(f) {
+  // 寬度縮到 1600 以內;很長的圖切成最多 4 段(每段 1600 高、重疊 150)
+  const bm = await createImageBitmap(f);
+  const TILE = 1600, OV = 150;
+  let scale = Math.min(1, 1600 / bm.width), h = Math.round(bm.height * scale);
+  if (h > 2000 && Math.ceil((h - OV) / (TILE - OV)) > 4) { scale *= (4 * (TILE - OV) + OV) / h; h = Math.round(bm.height * scale); }
+  const w = Math.round(bm.width * scale);
+  const c = mkCanvas(w, h), g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, w, h); g.imageSmoothingQuality = 'high'; g.drawImage(bm, 0, 0, w, h); bm.close && bm.close();
+  if (h <= 2000) return [c.toDataURL('image/jpeg', 0.92).split(',')[1]];
+  return segments(h, TILE, OV).slice(0, 4).map(([y, hh]) => {
+    const t = mkCanvas(w, hh); t.getContext('2d').drawImage(c, 0, y, w, hh, 0, 0, w, hh);
+    return t.toDataURL('image/jpeg', 0.92).split(',')[1];
+  });
+}
+async function readAtt(a) {
+  a.state = 'run'; renderAtts();
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const body = { name: a.name, mime: a.mime, original: await fileB64(a.file) };
+      if (!a.pdf) body.images = await attImages(a.file);
+      const r = await api('readAttachment', body);
+      Object.assign(a, { state: 'done', fileId: r.fileId, driveUrl: r.url, title: r.title, content: r.content });
+      renderAtts(); return;
+    } catch (e) {
+      a.err = e.code ? e : { code: 'bad_request', message: String(e.message || e) };
+      if (!['network','rate_limited','server_error','bad_ai','api_error'].includes(a.err.code)) break;
+      await sleep(2500 * (attempt + 1));
+    }
+  }
+  a.state = 'fail'; renderAtts();
+}
+const runDates = () => { const c = {}; (UP.msgs || []).filter(m => !m.del && m.date).forEach(m => c[m.date] = (c[m.date] || 0) + 1); return c; };
+function defaultDate() { const c = runDates(); return Object.keys(c).sort((x, y) => c[y] - c[x])[0] || UP.capture || $('#upDate').value || todayISO(); }
+async function matchAtts() {
+  const done = UP.atts.filter(a => a.state === 'done');
+  done.forEach(a => { a.msg = null; a.auto = false; });
+  const live = (UP.msgs || []).map((m, i) => ({ m, i })).filter(x => !x.m.del);
+  if (done.length && live.length) {
+    const withAtt = live.filter(x => x.m.attachments && x.m.attachments.length);
+    const pool = (withAtt.length ? withAtt : live).slice(0, 250);
+    const cands = pool.map(({ m, i }) => ({ i, sender: m.sender, date: m.date, time: m.time, text: m.text, attach: (m.attachments || []).join(' / ') }));
+    try {
+      const r = await api('matchAttachments', { cands, atts: done.map(a => ({ j: UP.atts.indexOf(a), name: a.name, title: a.title, content: (a.content || '').slice(0, 800) })) });
+      (r.pairs || []).forEach(p => { const a = UP.atts[p.att]; if (a && p.msg != null && UP.msgs[p.msg]) { a.msg = p.msg; a.auto = true; } });
+    } catch (e) {
+      // 備案:用英文字詞與數字的重疊程度配對
+      const tok = s => new Set((String(s || '').toLowerCase().match(/[a-z]{3,}|\d{2,}/g) || []));
+      done.forEach(a => {
+        const at = tok(a.title + ' ' + a.content); let best = null, bs = 1;
+        pool.forEach(({ m, i }) => { const mt = tok(m.text + ' ' + (m.attachments || []).join(' ')); let sc = 0; mt.forEach(t => at.has(t) && sc++); if (sc > bs) { bs = sc; best = i; } });
+        if (best != null) { a.msg = best; a.auto = true; }
+      });
+    }
+  }
+  done.forEach(a => { if (a.msg == null) a.date = a.date || defaultDate(); });
+}
+
 function segments(H, h, ov) {
   const out = []; let y = 0;
   while (y < H) { const hh = Math.min(h, H - y); out.push([y, hh]); if (y + hh >= H) break; y += hh - ov; }
@@ -439,7 +561,9 @@ async function sliceFile(f) {
 }
 function clearUpload() {
   UP.segs.forEach(s => URL.revokeObjectURL(s.url));
-  UP = { files: [], segs: [], msgs: null, title: null, running: false };
+  UP.atts.forEach(a => a.url && URL.revokeObjectURL(a.url));
+  UP = { files: [], segs: [], atts: [], msgs: null, title: null, running: false };
+  $('#attList').innerHTML = ''; $('#attInfo').textContent = ''; $('#attReview').innerHTML = '';
   $('#segs').innerHTML = ''; $('#upSegCard').classList.add('hide'); $('#upReview').classList.add('hide');
   $('#upStatus').textContent = ''; $('#ocrBar').style.width = '0'; $('#ocrInfo').textContent = ''; $('#sumProgress').innerHTML = '';
   $('#btnOCR').disabled = false; $('#btnSave').disabled = false;
@@ -470,7 +594,7 @@ function renderSegs() {
   box.querySelectorAll('[data-mask]').forEach(b => b.onclick = () => maskEditor(+b.dataset.mask));
   const done = UP.segs.filter(s => s.state === 'done').length, all = UP.segs.filter(s => !s.skip && s.state !== 'split').length;
   $('#ocrBar').style.width = (all ? done / all * 100 : 0) + '%';
-  $('#btnRetry').disabled = UP.running || !UP.segs.some(s => s.state === 'fail');
+  $('#btnRetry').disabled = UP.running || !(UP.segs.some(s => s.state === 'fail') || UP.atts.some(a => a.state === 'fail'));
 }
 
 /* 遮蔽編輯器 */
@@ -530,7 +654,8 @@ async function runOCR(onlyFailed) {
   const cd = $('#upDate').value || todayISO();
   UP.capture = cd;
   const todo = UP.segs.filter(s => !s.skip && s.state !== 'split' && (onlyFailed ? s.state === 'fail' : s.state !== 'done'));
-  if (!todo.length) { assemble(); return; }
+  const atodo = UP.atts.filter(a => onlyFailed ? a.state === 'fail' : a.state !== 'done');
+  if (!todo.length && !atodo.length) { await finishOCR(); return; }
   UP.running = true; $('#btnOCR').disabled = true; $('#btnRetry').disabled = true;
   const t0 = Date.now(); let n = 0;
   const info = () => { const done = UP.segs.filter(s => s.state === 'done').length, all = UP.segs.filter(s => !s.skip && s.state !== 'split').length;
@@ -563,15 +688,21 @@ async function runOCR(onlyFailed) {
       renderSegs();
     }
   };
-  await Promise.all(Array.from({ length: CONC }, worker));
+  let an = 0;
+  const aworker = async () => { while (an < atodo.length) await readAtt(atodo[an++]); };
+  await Promise.all([...Array.from({ length: CONC }, worker), aworker(), aworker()]);
   clearInterval(tick);
   UP.running = false; $('#btnOCR').disabled = false;
-  const fails = UP.segs.filter(s => s.state === 'fail').length;
-  $('#ocrInfo').textContent = `完成，用了 ${Math.round((Date.now() - t0) / 1000)} 秒` + (fails ? `，${fails} 片失敗（可按「重試失敗片段」，或略過後繼續）` : '');
+  const fails = UP.segs.filter(s => s.state === 'fail').length, afails = UP.atts.filter(a => a.state === 'fail').length;
+  $('#ocrInfo').textContent = `完成，用了 ${Math.round((Date.now() - t0) / 1000)} 秒` + (fails ? `，${fails} 片失敗` : '') + (afails ? `，${afails} 個附件失敗` : '') +
+    (fails || afails ? '（可按「重試失敗片段」，或略過後繼續）' : '');
   renderSegs();
-  assemble();
+  $('#ocrInfo').textContent += '　配對附件中…';
+  await finishOCR();
+  $('#ocrInfo').textContent = $('#ocrInfo').textContent.replace('　配對附件中…', '');
 }
-$('#btnOCR').onclick = () => runOCR(false);
+async function finishOCR() { assemble(); await matchAtts(); renderReview(); }
+$('#btnOCR').onclick = () => { if (!UP.segs.length && !UP.atts.length) return; runOCR(false); };
 $('#btnRetry').onclick = () => runOCR(true);
 
 /* 把各片段的訊息串起來:先對齊相鄰片段的重疊區(上一片尾巴 = 這一片開頭),再沿用上一則的發言人/日期/時間 */
@@ -630,7 +761,58 @@ function assemble() {
   UP.msgs = out;
   const tc = {}; UP.segs.forEach(s => { if (s.title) tc[s.title] = (tc[s.title] || 0) + 1; });
   UP.title = Object.keys(tc).sort((a, b) => tc[b] - tc[a])[0] || null;
-  renderReview();
+}
+
+function msgLabel(m) { return `${(m.date || '').slice(5)} ${m.time || ''} ${m.sender}：${String(m.text || '').replace(/\s+/g, ' ').slice(0, 34)}`; }
+function renderAttReview() {
+  const box = $('#attReview'); box.innerHTML = '';
+  const done = UP.atts.filter(a => a.state === 'done'), fail = UP.atts.filter(a => a.state === 'fail');
+  if (!done.length && !fail.length) return;
+  const wrap = el('div', 'daybox');
+  wrap.innerHTML = `<div class="dayhead">📎 附件 <span class="tag">${done.length} 個</span>${fail.length ? `<span class="tag" style="color:var(--stop)">${fail.length} 個讀取失敗，存檔時略過</span>` : ''}</div>`;
+  const live = UP.msgs.map((m, i) => ({ m, i })).filter(x => !x.m.del);
+  const withAtt = live.filter(x => x.m.attachments && x.m.attachments.length), other = live.filter(x => !(x.m.attachments && x.m.attachments.length));
+  const dates = [...new Set([...Object.keys(runDates()), UP.capture || $('#upDate').value])].filter(Boolean).sort();
+  done.forEach(a => {
+    const r = el('div', 'attrow');
+    const opt = x => `<option value="${x.i}" ${a.msg === x.i ? 'selected' : ''}>${esc(msgLabel(x.m))}</option>`;
+    r.innerHTML = `<div class="th">${a.pdf ? '📄' : `<img src="${a.url}" alt="">`}</div>
+      <div><b>${esc(a.title)}</b> <span class="hint">${esc(a.name)}</span>
+        <div class="row" style="margin:5px 0;align-items:center">
+          <select data-k="msg" style="min-width:320px"><option value="">— 不對應特定訊息，掛在某一天 —</option>
+            ${withAtt.length ? `<optgroup label="有附件的訊息">${withAtt.map(opt).join('')}</optgroup>` : ''}
+            ${other.length ? `<optgroup label="其他訊息">${other.map(opt).join('')}</optgroup>` : ''}</select>
+          ${a.msg == null ? `<select data-k="date">${dates.map(d => `<option ${a.date === d ? 'selected' : ''}>${d}</option>`).join('')}</select>` : ''}
+          ${a.auto && a.msg != null ? '<span class="tag">AI 配對</span>' : ''}</div>
+        <details><summary>擷取到的內容</summary><div class="md">${mdLite(a.content)}</div></details></div>`;
+    r.querySelector('[data-k=msg]').onchange = e => { const v = e.target.value; a.msg = v === '' ? null : +v; a.auto = false; if (a.msg == null) a.date = a.date || defaultDate(); renderReview(); };
+    const ds = r.querySelector('[data-k=date]'); if (ds) ds.onchange = e => { a.date = e.target.value; };
+    wrap.append(r);
+  });
+  box.append(wrap);
+}
+function mdLite(t) {
+  const inl = x => esc(x).replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+  let html = '', tbl = null, ul = false;
+  const flush = () => {
+    if (tbl) { html += '<table class="bi">' + tbl.map((r, i) => '<tr>' + r.map(c => i === 0 ? `<th>${c}</th>` : `<td>${c}</td>`).join('') + '</tr>').join('') + '</table>'; tbl = null; }
+    if (ul) { html += '</ul>'; ul = false; }
+  };
+  String(t || '').split('\n').forEach(raw => {
+    const l = raw.trim();
+    if (/^\|.*\|$/.test(l)) {
+      if (/^\|[\s:|-]+\|$/.test(l)) return;
+      if (ul) flush();
+      (tbl = tbl || []).push(l.slice(1, -1).split('|').map(c => inl(c.trim()))); return;
+    }
+    if (tbl) flush();
+    if (/^[-*・•]\s+/.test(l)) { if (!ul) { html += '<ul class="pl">'; ul = true; } html += '<li>' + inl(l.replace(/^[-*・•]\s+/, '')) + '</li>'; return; }
+    if (ul) flush();
+    if (/^#{1,4}\s/.test(l)) { html += '<div class="sec">' + inl(l.replace(/^#+\s/, '')) + '</div>'; return; }
+    html += l ? '<div>' + inl(l) + '</div>' : '<div style="height:6px"></div>';
+  });
+  flush();
+  return html;
 }
 
 function suggestGroup() {
@@ -657,6 +839,7 @@ function renderReview() {
     $('#grpName').oninput = upd; upd();
   } else pick.innerHTML = `<div class="hint">存到：<b>${esc(gname(sel))}</b></div>`;
 
+  renderAttReview();
   const box = $('#reviewList'); box.innerHTML = '';
   const live = UP.msgs.filter(m => !m.del);
   const dates = [...new Set(UP.msgs.map(m => m.date || ''))];
@@ -674,6 +857,7 @@ function renderReview() {
         <div><div class="x" contenteditable="plaintext-only" data-f="text">${esc(m.text)}</div>
           ${m.quote ? `<div class="q">${esc((m.quote.sender || '') + ' ' + (m.quote.when || ''))}\n${esc(m.quote.text || '')}</div>` : ''}
           ${m.attachments.length ? `<div class="a">${esc(m.attachments.join('\n'))}</div>` : ''}
+          ${UP.atts.filter(a => a.state === 'done' && a.msg === UP.msgs.indexOf(m)).map(a => `<span class="chip att">📎 ${esc(a.title)}</span>`).join(' ')}
           ${m.inferD ? '<span class="tag">日期推定</span>' : ''}${m.inferS ? '<span class="tag">發言人推定</span>' : ''}<span class="tag">片段 #${m.seg + 1}</span></div>
         <button class="btn ghost sm" title="${m.del ? '恢復' : '刪除'}">${m.del ? '↺' : '✕'}</button>`;
       r.querySelectorAll('[data-f]').forEach(f => f.onblur = () => { m[f.dataset.f] = f.textContent.trim(); if (f.dataset.f === 'sender') m.inferS = false; });
@@ -699,6 +883,8 @@ async function resolveGroup() {
 $('#btnSave').onclick = async () => {
   if (UP.running || !UP.msgs) return;
   const live = UP.msgs.filter(m => !m.del);
+  const doneAtts = UP.atts.filter(a => a.state === 'done');
+  if (!live.length && !doneAtts.length) { $('#saveInfo').textContent = '沒有可以存的內容。'; return; }
   const noDate = live.filter(m => !/^\d{4}-\d{2}-\d{2}$/.test(m.date || '')).length;
   if (noDate) { $('#saveInfo').innerHTML = `<span style="color:var(--stop)">有 ${noDate} 則沒有日期，請用「日期不明」旁的欄位補上。</span>`; return; }
   UP.running = true; $('#btnSave').disabled = true;
@@ -707,11 +893,17 @@ $('#btnSave').onclick = async () => {
     $('#saveInfo').innerHTML = '<span class="spin"></span> 存檔中…';
     const gid = await resolveGroup();
     const r = await api('saveRun', {
-      groupId: gid, fileName: UP.files.map(f => f.name).join(', '), captureDate: UP.capture,
+      groupId: gid, fileName: [...UP.files.map(f => f.name), ...doneAtts.map(a => '📎' + a.name)].join(', '), captureDate: UP.capture,
+      attachments: doneAtts.map(a => {
+        const m = a.msg != null ? UP.msgs[a.msg] : null, li = m && !m.del ? live.indexOf(m) : -1;
+        return { fileId: a.fileId, url: a.driveUrl, name: a.name, mime: a.mime, title: a.title, content: a.content,
+          msg: li >= 0 ? li : null, date: m ? m.date : (a.date || defaultDate()) };
+      }),
       segments: UP.segs.filter(s => !s.skip).length,
       messages: live.map(m => ({ sender: m.sender, date: m.date, time: m.time, text: m.text, quote: m.quote, attachments: m.attachments, lang: m.lang })),
     });
-    $('#saveInfo').innerHTML = `已存檔：第 ${runNo(r.runId)} 次上傳，新增 ${r.newCount} 則（其餘 ${r.total - r.newCount} 則已存在，只記下出現紀錄）。正在整理每日摘要與單字…`;
+    $('#saveInfo').innerHTML = `已存檔：第 ${runNo(r.runId)} 次上傳，新增 ${r.newCount} 則（其餘 ${r.total - r.newCount} 則已存在，只記下出現紀錄）` +
+      (r.attAdded ? `、附件 ${r.attAdded} 個` : '') + '。正在整理每日摘要與單字…';
     GCACHE.delete(gid);
     await summarizeDates(gid, r.dates, prog);
     $('#saveInfo').innerHTML += ' 完成。';
@@ -782,7 +974,8 @@ async function openGroup(gid, focus) {
   const byDate = {};
   data.messages.forEach(m => (byDate[m.date || ''] = byDate[m.date || ''] || []).push(m));
   const sums = {}; data.summaries.forEach(s => sums[s.date] = s);
-  const dates = [...new Set([...Object.keys(byDate), ...Object.keys(sums)])].sort().reverse();
+  const attsBy = {}; (data.atts || []).forEach(a => { ATTS.set(a.id, a); (attsBy[a.date] = attsBy[a.date] || []).push(a); });
+  const dates = [...new Set([...Object.keys(byDate), ...Object.keys(sums), ...Object.keys(attsBy)])].sort().reverse();
   main.innerHTML = '';
   const head = el('div', 'card');
   head.innerHTML = `<div class="row" style="align-items:center"><h2 style="margin:0;flex:1">${esc(g.name)}</h2>
@@ -791,17 +984,19 @@ async function openGroup(gid, focus) {
   main.append(head);
   head.querySelector('#gEdit').onclick = () => groupDialog(g);
   if (!dates.length) main.append(el('div', 'hint', '這個對話群還沒有資料。到「上傳分析」放截圖。'));
-  dates.forEach(d => main.append(dayCard(gid, d, byDate[d] || [], sums[d], { showGroup: false })));
+  dates.forEach(d => main.append(dayCard(gid, d, byDate[d] || [], sums[d], { showGroup: false, atts: attsBy[d] || [] })));
   if (focus) focusMsg(focus.date, focus.msg);
 }
 function sortMsgs(ms) { return ms.slice().sort((a, b) => (a.time && b.time && a.time !== b.time) ? (a.time < b.time ? -1 : 1) : a.i - b.i); }
-function msgHTML(m) {
+const attChip = a => `<span class="chip att" data-att="${esc(a.id)}" title="${esc(a.name)}">📎 ${esc(a.title || a.name)}</span>`;
+function msgHTML(m, atts) {
   const runs = String(m.runs || '').split(',').filter(Boolean).map(r => {
     const ri = runInfo(r);
     return `<a class="run" data-run="${esc(r)}" title="${esc(ri ? '第 ' + runNo(r) + ' 次上傳 ' + ri.time + '\n' + ri.file : r)}">#${runNo(r)}</a>`;
   }).join('');
   return `<div class="msg" data-msg="${esc(m.id)}"><div class="t">${esc(m.time || '')}</div><div class="s" title="${esc(m.sender)}">${esc(m.sender)}</div>
-    <div><div class="x">${br(m.text)}</div>${m.quote ? `<div class="q">${br(m.quote)}</div>` : ''}${m.attach ? `<div class="a">${br(m.attach)}</div>` : ''}</div>
+    <div><div class="x">${br(m.text)}</div>${m.quote ? `<div class="q">${br(m.quote)}</div>` : ''}${m.attach ? `<div class="a">${br(m.attach)}</div>` : ''}
+      ${(atts || []).filter(a => a.msg === m.id).map(attChip).join(' ')}</div>
     <div style="white-space:nowrap">${runs}</div></div>`;
 }
 function refLinks(refs) { return (refs || []).map(r => `<a class="ref" data-ref="${esc(r)}">↗原文</a>`).join(''); }
@@ -830,8 +1025,9 @@ function dayCard(gid, date, msgs, sumRow, opt) {
     <button class="btn ghost sm" data-act="raw">原文 ${msgs.length} 則 ▾</button>
     ${opt.showGroup ? '<button class="btn ghost sm" data-act="go">到對話群</button>' : ''}</header>
     <div class="body">${sumHTML(s)}
+      ${(opt.atts || []).length ? `<div class="sec">附件</div><div class="chips">${opt.atts.map(attChip).join('')}</div>` : ''}
       ${voc.length ? `<div class="sec">單字</div><div class="chips">${voc.map((v, i) => `<span class="chip" data-v="${i}"><b>${esc(v.term)}</b> ${esc(v.zh)}</span>`).join('')}</div>` : ''}
-      <div class="raw hide" style="margin-top:10px">${sortMsgs(msgs).map(msgHTML).join('')}</div></div>`;
+      <div class="raw hide" style="margin-top:10px">${sortMsgs(msgs).map(m => msgHTML(m, opt.atts)).join('')}</div></div>`;
   const raw = card.querySelector('.raw');
   card.querySelector('[data-act=raw]').onclick = () => raw.classList.toggle('hide');
   const go = card.querySelector('[data-act=go]'); if (go) go.onclick = () => { tab('groups'); openGroup(gid, { date }); };
@@ -846,7 +1042,30 @@ function dayCard(gid, date, msgs, sumRow, opt) {
   card.querySelectorAll('.ref').forEach(a => a.onclick = () => { raw.classList.remove('hide'); flash(card.querySelector(`[data-msg="${CSS.escape(a.dataset.ref)}"]`)); });
   card.querySelectorAll('[data-v]').forEach(c => c.onclick = () => vocabPop(voc[+c.dataset.v]));
   card.querySelectorAll('[data-run]').forEach(a => a.onclick = () => { tab('runs'); openRun(a.dataset.run); });
+  bindAtts(card);
   return card;
+}
+function bindAtts(root) { root.querySelectorAll('[data-att]').forEach(c => c.onclick = e => { e.stopPropagation(); attModal(ATTS.get(c.dataset.att)); }); }
+function attModal(a) {
+  if (!a) return;
+  openModal(`<h2 style="margin-top:0">📎 ${esc(a.title || a.name)}</h2>
+    <div class="hint">${esc(a.name)} ・ ${esc(gname(a.group))} ・ ${esc(a.date)}${a.run ? ' ・ 第 ' + runNo(a.run) + ' 次上傳' : ''}</div>
+    <div class="row" style="margin:10px 0"><button class="btn sm" id="amOrig">看原檔</button>
+      ${a.url ? `<a class="btn ghost sm" href="${esc(a.url)}" target="_blank" rel="noopener" style="text-decoration:none">在雲端硬碟開啟</a>` : ''}
+      ${a.msg ? '<button class="btn ghost sm" id="amGo">看對話原文</button>' : ''}<button class="btn ghost sm" id="amNo">關閉</button></div>
+    <div id="amView"></div><div class="md">${mdLite(a.content)}</div>`);
+  $('#amNo').onclick = closeModal;
+  const go = $('#amGo'); if (go) go.onclick = () => { closeModal(); tab('groups'); openGroup(a.group, { date: a.date, msg: a.msg }); };
+  $('#amOrig').onclick = async () => {
+    const v = $('#amView'); v.innerHTML = '<span class="spin"></span> 從雲端硬碟讀取中…';
+    try {
+      const r = await api('attGet', { id: a.id });
+      const bin = atob(r.data), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      const url = URL.createObjectURL(new Blob([u8], { type: r.mime }));
+      v.innerHTML = /pdf/.test(r.mime) ? `<iframe src="${url}" style="width:100%;height:70vh;border:1px solid var(--rule)"></iframe><a href="${url}" download="${esc(r.name)}">下載 PDF</a>`
+        : `<img src="${url}" alt="" style="max-width:100%;border:1px solid var(--rule)">`;
+    } catch (e) { v.innerHTML = `<div class="err">${esc(errText(e))}</div>`; }
+  };
 }
 function flash(node) { if (!node) return; node.scrollIntoView({ behavior: 'smooth', block: 'center' }); node.classList.add('flash'); setTimeout(() => node.classList.remove('flash'), 2500); }
 function focusMsg(date, msg) {
@@ -880,7 +1099,10 @@ async function openDate(d) {
   let data; try { data = await api('dateData', { date: d }); } catch (e) { main.innerHTML = `<div class="err">${esc(errText(e))}</div>`; return; }
   main.innerHTML = `<div class="card"><h2 style="margin:0">${d}（${wday(d)}）</h2><div class="hint">${data.summaries.length} 個對話群有摘要</div></div>`;
   const gids = [...new Set([...data.summaries.map(s => s.group), ...data.messages.map(m => m.group)])];
-  gids.forEach(g => main.append(dayCard(g, d, data.messages.filter(m => m.group === g), data.summaries.find(s => s.group === g), { showGroup: true })));
+  (data.atts || []).forEach(a => ATTS.set(a.id, a));
+  const allG = [...new Set([...gids, ...(data.atts || []).map(a => a.group)])];
+  allG.forEach(g => main.append(dayCard(g, d, data.messages.filter(m => m.group === g), data.summaries.find(s => s.group === g),
+    { showGroup: true, atts: (data.atts || []).filter(a => a.group === g) })));
 }
 
 /* ================= 單字 ================= */
@@ -960,8 +1182,11 @@ async function openRun(id) {
     const c = el('div', 'card');
     c.innerHTML = `<h2>第 ${runNo(id)} 次上傳 ${r ? '・' + esc(r.time) + '・' + esc(gname(r.group)) : ''}</h2>
       <div class="hint">這次截圖裡辨識到的 ${d.messages.length} 則訊息（包含之前已經存過的）。</div>`;
+    (d.atts || []).forEach(a => ATTS.set(a.id, a));
+    if ((d.atts || []).length) { const x = el('div', 'daybox'); x.innerHTML = `<div class="dayhead">📎 附件 ${d.atts.length} 個</div><div class="chips">${d.atts.map(attChip).join('')}</div>`; c.append(x); }
     const byD = {}; d.messages.forEach(m => (byD[m.date] = byD[m.date] || []).push(m));
-    Object.keys(byD).sort().forEach(dd => { const x = el('div', 'daybox'); x.innerHTML = `<div class="dayhead">${esc(dd)}（${wday(dd)}）</div>` + sortMsgs(byD[dd]).map(msgHTML).join(''); c.append(x); });
+    Object.keys(byD).sort().forEach(dd => { const x = el('div', 'daybox'); x.innerHTML = `<div class="dayhead">${esc(dd)}（${wday(dd)}）</div>` + sortMsgs(byD[dd]).map(m => msgHTML(m, d.atts)).join(''); c.append(x); });
+    bindAtts(c);
     if (r) { const go = el('button', 'btn ghost sm', '到對話群'); go.onclick = () => { tab('groups'); openGroup(r.group, { date: r.from }); }; c.querySelector('h2').append(' ', go); }
     box.append(c);
     box.scrollIntoView({ behavior: 'smooth' });
@@ -974,7 +1199,9 @@ async function doSearch() {
   const box = $('#sres'); box.innerHTML = '<div class="card"><span class="spin"></span> 搜尋中…</div>';
   try {
     const r = await api('search', { q });
-    const c = el('div', 'card'); c.innerHTML = `<h2>${r.messages.length} 筆${r.messages.length >= 300 ? '（只列前 300 筆）' : ''}</h2>`;
+    const c = el('div', 'card'); c.innerHTML = `<h2>${r.messages.length} 筆訊息${r.messages.length >= 300 ? '（只列前 300 筆）' : ''}${(r.atts || []).length ? '、' + r.atts.length + ' 個附件' : ''}</h2>`;
+    (r.atts || []).forEach(a => ATTS.set(a.id, a));
+    if ((r.atts || []).length) { const x = el('div', 'chips'); x.style.margin = '6px 0 10px'; x.innerHTML = r.atts.map(a => attChip(a).replace('📎 ', '📎 ' + esc(gname(a.group)) + ' · ' + esc(a.date) + ' · ')).join(''); c.append(x); }
     r.messages.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (a.time || '').localeCompare(b.time || '')).forEach(m => {
       const x = el('div'); x.innerHTML = `<div class="hint" style="margin-top:6px"><a href="#" data-g="${esc(m.group)}" data-d="${esc(m.date)}" data-m="${esc(m.id)}">${esc(gname(m.group))} · ${esc(m.date)}</a></div>` + msgHTML(m);
       c.append(x);
@@ -982,6 +1209,7 @@ async function doSearch() {
     box.innerHTML = ''; box.append(c);
     c.querySelectorAll('[data-g]').forEach(a => a.onclick = e => { e.preventDefault(); tab('groups'); openGroup(a.dataset.g, { date: a.dataset.d, msg: a.dataset.m }); });
     c.querySelectorAll('[data-run]').forEach(a => a.onclick = () => { tab('runs'); openRun(a.dataset.run); });
+    bindAtts(c);
   } catch (e) { box.innerHTML = `<div class="err">${esc(errText(e))}</div>`; }
 }
 $('#btnSearch').onclick = doSearch;
