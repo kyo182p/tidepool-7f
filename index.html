@@ -1,0 +1,1100 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>對話整理</title>
+<style>
+:root{
+  --ground:#E9EDEE; --surface:#FCFDFD; --sunk:#DFE5E7;
+  --ink:#101B20; --ink-2:#41565F; --ink-3:#6D8189;
+  --rule:#C8D3D6; --rule-2:#DDE4E6;
+  --navy:#123B54; --navy-soft:#DEE9EE;
+  --buoy:#B24E19; --buoy-soft:#F7E7DC;
+  --ok:#2C6549; --ok-soft:#DFEDE6;
+  --warn:#8A5A05; --warn-soft:#F6EBD7;
+  --stop:#9C3524; --stop-soft:#F7E3DE;
+  --hl:#FFF1B8;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --ground:#08110F; --surface:#0F1A1E; --sunk:#141F24;
+  --ink:#DCE6E9; --ink-2:#95A9B1; --ink-3:#74888F;
+  --rule:#22333A; --rule-2:#1A272D;
+  --navy:#68AECB; --navy-soft:#102B37;
+  --buoy:#E58A52; --buoy-soft:#2B1911;
+  --ok:#5FBE96; --ok-soft:#0F2820;
+  --warn:#DFA754; --warn-soft:#2A2011;
+  --stop:#EC8571; --stop-soft:#2E1611;
+  --hl:#3A3410;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font:14px/1.55 "Noto Sans TC","Microsoft JhengHei","PingFang TC",system-ui,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--navy)}
+.top{background:var(--surface);border-bottom:1px solid var(--rule);padding:12px 20px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.top h1{margin:0;font-size:19px;letter-spacing:.02em}
+.top .sp{flex:1}
+.who{font-size:13px;color:var(--ink-2)}
+.nav{background:var(--surface);border-bottom:1px solid var(--rule);padding:0 14px;display:flex;gap:2px;overflow-x:auto}
+.nav button{background:none;border:none;border-bottom:2px solid transparent;padding:10px 13px;color:var(--ink-2);cursor:pointer;white-space:nowrap}
+.nav button.on{color:var(--ink);border-bottom-color:var(--buoy);font-weight:700}
+.wrap{max-width:1240px;margin:0 auto;padding:16px}
+.hide{display:none!important}
+.btn{background:var(--navy);color:var(--surface);border:none;border-radius:4px;padding:8px 16px;cursor:pointer;font-weight:500}
+.btn.ghost{background:none;border:1px solid var(--rule);color:var(--ink-2)}
+.btn.sm{padding:4px 10px;font-size:12.5px}
+.btn.warn{background:var(--buoy)}
+.btn:disabled{opacity:.45;cursor:default}
+.card{background:var(--surface);border:1px solid var(--rule);border-radius:6px;padding:14px 16px;margin-bottom:12px}
+.card h2{margin:0 0 8px;font-size:16px}
+.hint{font-size:12.5px;color:var(--ink-3)}
+.note{background:var(--buoy-soft);border-left:3px solid var(--buoy);padding:10px 13px;border-radius:3px;margin-bottom:12px;font-size:13.5px}
+.err{background:var(--stop-soft);color:var(--stop);padding:10px 13px;border-radius:3px;margin:8px 0;font-size:13.5px}
+.okmsg{background:var(--ok-soft);color:var(--ok);padding:10px 13px;border-radius:3px;margin:8px 0;font-size:13.5px}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+label.f{display:flex;flex-direction:column;gap:3px;font-size:12.5px;color:var(--ink-3)}
+input[type=text],input[type=date],input[type=password],select,textarea{background:var(--surface);border:1px solid var(--rule);border-radius:4px;padding:6px 9px}
+.drop{border:2px dashed var(--rule);border-radius:8px;padding:26px;text-align:center;cursor:pointer;background:var(--surface)}
+.drop.over{border-color:var(--buoy);background:var(--buoy-soft)}
+.segs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:12px}
+.seg{border:1px solid var(--rule);border-radius:6px;background:var(--surface);padding:6px;font-size:12px;position:relative}
+.seg .pic{position:relative;height:150px;overflow:hidden;border-radius:3px;background:#fff}
+.seg .pic img{width:100%;display:block}
+.seg .mask{position:absolute;background:#000;opacity:.85}
+.seg.skip .pic{opacity:.25}
+.seg .bar{display:flex;gap:4px;align-items:center;margin-top:5px;flex-wrap:wrap}
+.st{display:inline-block;padding:0 6px;border-radius:9px;font-size:11px;background:var(--sunk);color:var(--ink-2)}
+.st.run{background:var(--warn-soft);color:var(--warn)}
+.st.done{background:var(--ok-soft);color:var(--ok)}
+.st.fail{background:var(--stop-soft);color:var(--stop)}
+.progress{height:6px;background:var(--sunk);border-radius:3px;overflow:hidden;margin:8px 0}
+.progress i{display:block;height:100%;background:var(--buoy);width:0;transition:width .3s}
+.daybox{border-top:1px solid var(--rule-2);padding-top:8px;margin-top:10px}
+.dayhead{display:flex;gap:10px;align-items:center;font-weight:700;margin:6px 0}
+.msg{display:grid;grid-template-columns:52px 150px 1fr auto;gap:8px;padding:5px 6px;border-radius:4px;align-items:start;font-size:13.5px}
+.msg:hover{background:var(--sunk)}
+.msg .t{color:var(--ink-3);font-variant-numeric:tabular-nums}
+.msg .s{color:var(--navy);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg .x{white-space:pre-wrap;word-break:break-word}
+.msg .q{border-left:3px solid var(--rule);padding:2px 8px;margin:3px 0;color:var(--ink-3);font-size:12.5px;white-space:pre-wrap}
+.msg .a{color:var(--ink-2);font-size:12.5px;white-space:pre-wrap;background:var(--navy-soft);padding:3px 7px;border-radius:3px;margin-top:3px}
+.msg.del{opacity:.35;text-decoration:line-through}
+.msg.flash{background:var(--hl)}
+.msg [contenteditable]{outline:none;border-bottom:1px dashed transparent}
+.msg [contenteditable]:focus{border-bottom-color:var(--buoy)}
+.tag{display:inline-block;font-size:11px;padding:0 5px;border-radius:3px;background:var(--sunk);color:var(--ink-3);margin-left:4px;font-weight:400}
+.run{font-size:11px;padding:0 5px;border-radius:3px;background:var(--navy-soft);color:var(--navy);cursor:pointer;margin-left:3px;text-decoration:none}
+.split{display:grid;grid-template-columns:270px 1fr;gap:14px;align-items:start}
+@media (max-width:820px){.split{grid-template-columns:1fr}.msg{grid-template-columns:44px 1fr auto}.msg .s{grid-column:2}.msg .x{grid-column:1/-1}}
+.glist{background:var(--surface);border:1px solid var(--rule);border-radius:6px;overflow:hidden}
+.glist .gi{padding:8px 12px;border-bottom:1px solid var(--rule-2);cursor:pointer;display:flex;gap:6px;align-items:center}
+.glist .gi:hover{background:var(--sunk)}
+.glist .gi.on{background:var(--navy-soft);border-left:3px solid var(--navy)}
+.glist .gi .n{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.glist .gi .c{font-size:11.5px;color:var(--ink-3)}
+.glist .gi.off .n{color:var(--ink-3);text-decoration:line-through}
+.dcard{background:var(--surface);border:1px solid var(--rule);border-radius:6px;margin-bottom:12px}
+.dcard>header{display:flex;gap:10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--rule-2);flex-wrap:wrap}
+.dcard>header h3{margin:0;font-size:15px}
+.dcard>header .ttl{color:var(--ink-2);flex:1;min-width:160px}
+.dcard .body{padding:10px 14px}
+.sec{margin:8px 0 4px;font-size:12.5px;font-weight:700;color:var(--buoy);letter-spacing:.03em}
+table.bi{width:100%;border-collapse:collapse;font-size:13.5px}
+table.bi td,table.bi th{border-bottom:1px solid var(--rule-2);padding:5px 6px;vertical-align:top;text-align:left}
+table.bi th{font-size:12px;color:var(--ink-3);font-weight:600}
+table.bi td.en{color:var(--ink-2)}
+ul.pl{margin:2px 0;padding-left:20px}
+ul.pl li{margin:2px 0}
+.ref{font-size:11px;color:var(--navy);cursor:pointer;margin-left:4px;text-decoration:none;white-space:nowrap}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--rule);border-radius:14px;padding:2px 10px;font-size:12.5px;cursor:pointer;background:var(--surface)}
+.chip b{font-weight:600}
+.chip:hover{border-color:var(--navy)}
+.vrow{display:grid;grid-template-columns:200px 1fr;gap:12px;padding:9px 4px;border-bottom:1px solid var(--rule-2)}
+.vrow .term{font-weight:700;font-size:15px}
+.vrow .src a{font-size:12px;margin-right:8px;cursor:pointer}
+.flash-card{max-width:620px;margin:10px auto;text-align:center;padding:28px 22px}
+.flash-card .big{font-size:30px;font-weight:700;margin:8px 0}
+.flash-card .ex{color:var(--ink-2);margin:10px 0;font-size:14.5px}
+.flash-card mark{background:var(--hl);color:inherit;padding:0 2px}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;z-index:50;padding:14px}
+.modal .box{background:var(--surface);border-radius:8px;max-width:960px;width:100%;max-height:92vh;overflow:auto;padding:16px 18px}
+.maskwrap{position:relative;display:inline-block;cursor:crosshair;user-select:none;max-width:100%}
+.maskwrap img{display:block;max-width:100%}
+.maskwrap .mask{position:absolute;background:rgba(0,0,0,.85);outline:1px solid var(--buoy)}
+table.list{width:100%;border-collapse:collapse;font-size:13px}
+table.list td,table.list th{border-bottom:1px solid var(--rule-2);padding:6px;text-align:left}
+table.list tr.click{cursor:pointer}
+table.list tr.click:hover{background:var(--sunk)}
+.spin{display:inline-block;width:12px;height:12px;border:2px solid var(--rule);border-top-color:var(--buoy);border-radius:50%;animation:sp 1s linear infinite;vertical-align:-2px}
+@keyframes sp{to{transform:rotate(360deg)}}
+</style>
+</head>
+<body>
+<div class="top">
+  <h1>對話整理</h1>
+  <span class="hint">Teams 長截圖 → 逐字稿 → 每日摘要・單字</span>
+  <span class="sp"></span>
+  <span class="who" id="who"></span>
+  <button class="btn ghost sm" id="btnReload">重新載入</button>
+  <button class="btn ghost sm" id="btnLogin">⚙ 代碼</button>
+</div>
+<div class="nav" id="nav">
+  <button data-tab="upload" class="on">上傳分析</button>
+  <button data-tab="groups">對話群</button>
+  <button data-tab="dates">依日期</button>
+  <button data-tab="vocab">單字練習</button>
+  <button data-tab="runs">上傳紀錄</button>
+  <button data-tab="search">搜尋</button>
+</div>
+<div class="wrap">
+  <div id="gerr" class="err hide"></div>
+
+  <!-- 上傳分析 -->
+  <section id="tab-upload">
+    <div class="card">
+      <h2>1. 選對話群和截圖</h2>
+      <div class="row">
+        <label class="f">對話群
+          <select id="upGroup" style="min-width:280px"></select></label>
+        <label class="f">截圖日期（換算 Yesterday、Tuesday 用）
+          <input type="date" id="upDate"></label>
+      </div>
+      <div class="drop" id="drop" style="margin-top:12px">
+        <b>把 ShareX 長截圖拖進來，或點這裡選檔案</b>
+        <div class="hint">可一次放多張（依檔名排序當成同一段對話的上下文）。PNG 不限高度，圖片只會以小片段送去辨識。</div>
+        <input type="file" id="file" accept="image/*" multiple class="hide">
+      </div>
+      <div id="upStatus" class="hint" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card hide" id="upSegCard">
+      <h2>2. 檢查片段，必要時遮蔽敏感內容</h2>
+      <div class="hint">點「遮蔽」可在片段上拖曳畫黑框（例如帳號密碼），送出前會塗黑；不需要的片段可以「略過」。</div>
+      <div class="row" style="margin-top:8px">
+        <button class="btn" id="btnOCR">開始辨識</button>
+        <button class="btn ghost" id="btnRetry" disabled>重試失敗片段</button>
+        <button class="btn ghost" id="btnClear">清除重來</button>
+        <span id="ocrInfo" class="hint"></span>
+      </div>
+      <div class="progress"><i id="ocrBar"></i></div>
+      <div class="segs" id="segs"></div>
+    </div>
+
+    <div class="card hide" id="upReview">
+      <h2>3. 校對逐字稿，然後存檔</h2>
+      <div class="hint">文字可以直接點進去改；✕ 刪除辨識錯的訊息；日期旁的欄位可以整天一起改日期。「推定」表示是依前後文推出來的。</div>
+      <div class="row" style="margin-top:10px" id="grpPick"></div>
+      <div id="reviewList"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn warn" id="btnSave">存檔並整理摘要</button>
+        <span id="saveInfo" class="hint"></span>
+      </div>
+      <div id="sumProgress"></div>
+    </div>
+  </section>
+
+  <!-- 對話群 -->
+  <section id="tab-groups" class="hide">
+    <div class="split">
+      <div>
+        <div class="row" style="margin-bottom:8px">
+          <button class="btn sm" id="btnNewGroup">＋ 新增對話群</button>
+          <label style="font-size:12.5px;color:var(--ink-3)"><input type="checkbox" id="showOff"> 顯示停用的</label>
+        </div>
+        <div class="glist" id="glist"></div>
+      </div>
+      <div id="gmain"><div class="hint">左邊選一個對話群。</div></div>
+    </div>
+  </section>
+
+  <!-- 依日期 -->
+  <section id="tab-dates" class="hide">
+    <div class="split">
+      <div class="glist" id="dlist"></div>
+      <div id="dmain"><div class="hint">左邊選一天，看那天所有對話群的摘要。</div></div>
+    </div>
+  </section>
+
+  <!-- 單字 -->
+  <section id="tab-vocab" class="hide">
+    <div class="card">
+      <div class="row">
+        <label class="f">篩選<input type="text" id="vq" placeholder="單字或中文"></label>
+        <label class="f">對話群<select id="vg"></select></label>
+        <button class="btn" id="btnPractice">開始練習</button>
+        <span class="hint" id="vstat"></span>
+      </div>
+    </div>
+    <div id="practice" class="hide"></div>
+    <div class="card" id="vlist"></div>
+  </section>
+
+  <!-- 上傳紀錄 -->
+  <section id="tab-runs" class="hide">
+    <div class="card"><table class="list" id="runTable"></table></div>
+    <div id="runDetail"></div>
+  </section>
+
+  <!-- 搜尋 -->
+  <section id="tab-search" class="hide">
+    <div class="card">
+      <div class="row">
+        <label class="f" style="flex:1">搜尋所有訊息（人名、關鍵字，空格隔開＝同時符合）
+          <input type="text" id="sq" placeholder="例如：Muehlhan 名單"></label>
+        <button class="btn" id="btnSearch">搜尋</button>
+      </div>
+    </div>
+    <div id="sres"></div>
+  </section>
+</div>
+
+<div id="modal" class="modal hide"><div class="box" id="mbox"></div></div>
+
+<script>
+/* ================= 設定 ================= */
+const CONFIG = { API_URL: '' };           // ← 貼上 Apps Script 的 /exec 網址
+const SEG_H = 1100;     // 每片輸出高度(像素):Apps Script 單次呼叫約 60 秒上限,片段要小
+const SEG_OV = 260;     // 片段重疊,避免訊息被切在中間
+const MAX_W = 1400;     // 寬度上限,太寬先縮
+const CONC = 3;         // 同時送幾片
+
+/* ================= 小工具 ================= */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+const el = (t, c, h) => { const e = document.createElement(t); if (c) e.className = c; if (h !== undefined) e.innerHTML = h; return e; };
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (_) { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} },
+};
+const todayISO = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const WD = ['日','一','二','三','四','五','六'];
+const wday = iso => WD[new Date(iso + 'T00:00:00Z').getUTCDay()];
+const normT = s => String(s || '').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+const br = s => esc(s).replace(/\n/g, '<br>');
+
+let ME = { code: LS.get('cd_code', ''), name: '', owner: LS.get('cd_owner', 'Wu, Tina') };
+let DB = { groups: [], runs: [], sums: [], vocab: [] };
+const GCACHE = new Map();
+let CUR_G = null, CUR_D = null;
+
+const ERR = {
+  bad_code: '代碼不對或已停用。', network: '連不到後端，請檢查網路。', server_error: '後端發生錯誤。',
+  not_configured: '網頁還沒設定後端網址（CONFIG.API_URL）。', timeout: 'AI 回應超過 60 秒逾時。',
+  rate_limited: 'AI 服務忙碌，稍後再試。', no_credit: 'API 額度不足，請到 Claude Console 儲值。',
+  api_error: 'AI 服務回報錯誤。', no_key: '後端沒有設定 ANTHROPIC_API_KEY。', bad_group: '找不到這個對話群。',
+  bad_ai: 'AI 回傳的格式解析失敗。', not_setup: '後端還沒執行 setup()。', no_messages: '這一天沒有訊息。',
+  bad_request: '請求格式錯誤。', cancelled: '已取消。',
+};
+const errText = e => (ERR[e && e.code] || '發生錯誤') + (e && e.message ? '（' + e.message + '）' : '');
+
+async function api(action, data) {
+  if (!CONFIG.API_URL) throw { code: 'not_configured' };
+  let res;
+  try {
+    res = await fetch(CONFIG.API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action, code: ME.code, ...(data || {}) }), redirect: 'follow' });
+  } catch (e) { throw { code: 'network' }; }
+  let j; try { j = await res.json(); } catch (e) { throw { code: 'server_error' }; }
+  if (!j.ok) throw { code: j.code || 'server_error', message: j.message || '' };
+  return j;
+}
+function gerr(msg) { const b = $('#gerr'); b.textContent = msg || ''; b.classList.toggle('hide', !msg); }
+const gname = id => (DB.groups.find(g => g.id === id) || {}).name || id;
+const runInfo = id => DB.runs.find(r => r.id === id);
+const runNo = id => parseInt(String(id).replace(/\D/g, ''), 10) || id;
+
+/* ================= 登入 ================= */
+function loginModal(msg) {
+  openModal(`<h2 style="margin-top:0">輸入代碼</h2>
+    ${msg ? `<div class="err">${esc(msg)}</div>` : ''}
+    <div class="row">
+      <label class="f" style="flex:1">代碼（管理者給的，像 AOC-XXXXXXXX）<input type="password" id="lgCode" value="${esc(ME.code)}"></label>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <label class="f" style="flex:1">你在 Teams 上顯示的名字（截圖裡靠右的訊息算你的）<input type="text" id="lgOwner" value="${esc(ME.owner)}"></label>
+    </div>
+    <div class="row" style="margin-top:14px"><button class="btn" id="lgOk">確定</button><span id="lgInfo" class="hint"></span></div>`);
+  $('#lgOk').onclick = async () => {
+    ME.code = $('#lgCode').value.trim(); ME.owner = $('#lgOwner').value.trim() || 'Wu, Tina';
+    $('#lgInfo').innerHTML = '<span class="spin"></span> 驗證中…';
+    try {
+      const r = await api('ping');
+      ME.name = r.name; LS.set('cd_code', ME.code); LS.set('cd_owner', ME.owner);
+      closeModal(); await loadAll();
+    } catch (e) { $('#lgInfo').textContent = errText(e); }
+  };
+}
+function openModal(html) { $('#mbox').innerHTML = html; $('#modal').classList.remove('hide'); }
+function closeModal() { $('#modal').classList.add('hide'); $('#mbox').innerHTML = ''; }
+$('#modal').addEventListener('mousedown', e => { if (e.target.id === 'modal' && !$('#mbox').querySelector('.maskwrap')) closeModal(); });
+$('#btnLogin').onclick = () => loginModal();
+$('#btnReload').onclick = () => { GCACHE.clear(); loadAll(); };
+
+async function loadAll() {
+  gerr('');
+  if (!CONFIG.API_URL) { gerr(ERR.not_configured); return; }
+  if (!ME.code) { loginModal(); return; }
+  try {
+    const [p, b] = await Promise.all([api('ping'), api('bootstrap')]);
+    ME.name = p.name;
+    DB = { groups: b.groups, runs: b.runs, sums: b.sums, vocab: b.vocab };
+    $('#who').textContent = ME.name + ' ・ 截圖者：' + ME.owner;
+    fillGroupSelect(); renderGroups(); renderDates(); renderVocab(); renderRuns();
+    if (CUR_G) openGroup(CUR_G);
+  } catch (e) {
+    if (e.code === 'bad_code') loginModal(errText(e)); else gerr(errText(e));
+  }
+}
+
+/* ================= 分頁 ================= */
+function tab(name) {
+  document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('on', b.dataset.tab === name));
+  ['upload','groups','dates','vocab','runs','search'].forEach(t => $('#tab-' + t).classList.toggle('hide', t !== name));
+}
+document.querySelectorAll('#nav button').forEach(b => b.onclick = () => tab(b.dataset.tab));
+
+/* ================= 1. 上傳與分段 ================= */
+let UP = { files: [], segs: [], msgs: null, title: null, running: false };
+$('#upDate').value = todayISO();
+function fillGroupSelect() {
+  const s = $('#upGroup'), keep = s.value;
+  s.innerHTML = `<option value="__auto">🤖 讓 AI 從截圖判斷（可改）</option><option value="__new">＋ 新增對話群…</option>` +
+    DB.groups.filter(g => g.enabled).map(g => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join('');
+  s.value = keep && [...s.options].some(o => o.value === keep) ? keep : '__auto';
+}
+const drop = $('#drop'), fileIn = $('#file');
+drop.onclick = () => fileIn.click();
+document.addEventListener('dragover', e => { e.preventDefault(); if (!$('#tab-upload').classList.contains('hide')) drop.classList.add('over'); });
+document.addEventListener('dragleave', e => { if (!e.relatedTarget) drop.classList.remove('over'); });
+document.addEventListener('drop', e => {
+  e.preventDefault(); drop.classList.remove('over');
+  if ($('#tab-upload').classList.contains('hide')) return;
+  addFiles(e.dataTransfer.files);
+});
+fileIn.onchange = () => { addFiles(fileIn.files); fileIn.value = ''; };
+document.addEventListener('paste', e => {
+  if ($('#tab-upload').classList.contains('hide')) return;
+  const it = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (it) addFiles([it.getAsFile()]);
+});
+
+const isImg = f => /^image\//.test(f.type) || /\.(png|jpe?g|webp|bmp)$/i.test(f.name);
+async function addFiles(list) {
+  if (UP.running) return;
+  const files = [...list].filter(isImg).sort((a, b) => (a.name || '').localeCompare(b.name || '', undefined, { numeric: true }));
+  if (!files.length) { $('#upStatus').textContent = '拖進來的不是圖片。'; return; }
+  if (UP.msgs) clearUpload();
+  if (!UP.files.length && files[0].lastModified) {
+    const d = new Date(files[0].lastModified);
+    $('#upDate').value = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  }
+  $('#upSegCard').classList.remove('hide');
+  for (const f of files) {
+    UP.files.push(f);
+    $('#upStatus').innerHTML = `<span class="spin"></span> 切割 ${esc(f.name || '貼上的圖片')}…`;
+    try { await sliceFile(f); }
+    catch (e) { $('#upStatus').innerHTML = `<span style="color:var(--stop)">${esc(f.name)} 讀不出來：${esc(e.message || e)}</span>`; return; }
+  }
+  $('#upStatus').textContent = `共 ${UP.files.length} 個檔案、${UP.segs.length} 個片段。`;
+  renderSegs();
+}
+function segments(H, h, ov) {
+  const out = []; let y = 0;
+  while (y < H) { const hh = Math.min(h, H - y); out.push([y, hh]); if (y + hh >= H) break; y += hh - ov; }
+  return out;
+}
+const mkCanvas = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+const toBlob = (c, t, q) => new Promise(r => c.toBlob(r, t || 'image/png', q));
+function loadImg(f) {
+  return new Promise((ok, bad) => { const u = URL.createObjectURL(f), im = new Image();
+    im.onload = () => ok(im); im.onerror = () => bad(new Error('瀏覽器解不開這張圖（JPG 太高時會這樣，請改用 PNG）')); im.src = u; });
+}
+async function sliceFile(f) {
+  const u8 = new Uint8Array(await f.arrayBuffer());
+  const png = u8.length > 8 && u8[0] === 0x89 && u8[1] === 0x50 && u8[2] === 0x4E && u8[3] === 0x47;
+  let W, H, gen;
+  if (png) {
+    const hdr = pngHeader(u8); W = hdr.w; H = hdr.h;
+    gen = segs => pngSegments(u8, hdr, segs);
+  } else {
+    const img = await loadImg(f); W = img.naturalWidth; H = img.naturalHeight;
+    gen = async function* (segs) { for (const [y, h] of segs) { const c = mkCanvas(W, h); c.getContext('2d').drawImage(img, 0, y, W, h, 0, 0, W, h); yield c; } };
+  }
+  const scale = Math.min(1, MAX_W / W);
+  const segs = segments(H, Math.round(SEG_H / scale), Math.round(SEG_OV / scale));
+  let k = 0;
+  for await (const c of gen(segs)) {
+    let oc = c;
+    if (scale !== 1) {
+      oc = mkCanvas(Math.round(c.width * scale), Math.round(c.height * scale));
+      const g = oc.getContext('2d'); g.imageSmoothingQuality = 'high'; g.drawImage(c, 0, 0, oc.width, oc.height);
+    }
+    const blob = await toBlob(oc);
+    UP.segs.push({ file: f.name || '貼上的圖片', k: ++k, blob, w: oc.width, h: oc.height, url: URL.createObjectURL(blob), masks: [], skip: false, state: '', msgs: null });
+    $('#upStatus').innerHTML = `<span class="spin"></span> 切割 ${esc(f.name || '')}… ${k}/${segs.length}`;
+  }
+}
+function clearUpload() {
+  UP.segs.forEach(s => URL.revokeObjectURL(s.url));
+  UP = { files: [], segs: [], msgs: null, title: null, running: false };
+  $('#segs').innerHTML = ''; $('#upSegCard').classList.add('hide'); $('#upReview').classList.add('hide');
+  $('#upStatus').textContent = ''; $('#ocrBar').style.width = '0'; $('#ocrInfo').textContent = ''; $('#sumProgress').innerHTML = '';
+  $('#btnOCR').disabled = false; $('#btnSave').disabled = false;
+}
+$('#btnClear').onclick = () => { if (!UP.running) clearUpload(); };
+
+function segStateText(s) {
+  return s.state === 'run' ? '<span class="st run">辨識中</span>'
+    : s.state === 'done' ? `<span class="st done">${s.msgs.length} 則</span>`
+    : s.state === 'fail' ? `<span class="st fail" title="${esc(errText(s.err))}">失敗</span>`
+    : s.state === 'split' ? '<span class="st">已拆成兩半</span>'
+    : s.skip ? '<span class="st">略過</span>' : '<span class="st">待辨識</span>';
+}
+function renderSegs() {
+  const box = $('#segs'); box.innerHTML = '';
+  UP.segs.forEach((s, i) => {
+    if (s.state === 'split') return;
+    const d = el('div', 'seg' + (s.skip ? ' skip' : ''));
+    d.innerHTML = `<div class="pic"><img src="${s.url}" alt="">${s.masks.map(m =>
+      `<div class="mask" style="left:${m.x / s.w * 100}%;top:${m.y / s.h * 100}%;width:${m.w / s.w * 100}%;height:${m.h / s.h * 100}%"></div>`).join('')}</div>
+      <div class="bar"><b>#${i + 1}</b> ${segStateText(s)}<span style="flex:1"></span>
+      <button class="btn ghost sm" data-mask="${i}">遮蔽${s.masks.length ? '(' + s.masks.length + ')' : ''}</button>
+      <button class="btn ghost sm" data-skip="${i}">${s.skip ? '恢復' : '略過'}</button></div>`;
+    d.title = s.file + ' 第 ' + s.k + ' 片';
+    box.append(d);
+  });
+  box.querySelectorAll('[data-skip]').forEach(b => b.onclick = () => { if (UP.running) return; const s = UP.segs[+b.dataset.skip]; s.skip = !s.skip; renderSegs(); });
+  box.querySelectorAll('[data-mask]').forEach(b => b.onclick = () => maskEditor(+b.dataset.mask));
+  const done = UP.segs.filter(s => s.state === 'done').length, all = UP.segs.filter(s => !s.skip && s.state !== 'split').length;
+  $('#ocrBar').style.width = (all ? done / all * 100 : 0) + '%';
+  $('#btnRetry').disabled = UP.running || !UP.segs.some(s => s.state === 'fail');
+}
+
+/* 遮蔽編輯器 */
+function maskEditor(i) {
+  const s = UP.segs[i]; if (!s || UP.running) return;
+  openModal(`<div class="row" style="justify-content:space-between;margin-bottom:8px"><b>片段 #${i + 1}：拖曳畫出要塗黑的範圍</b>
+    <span><button class="btn ghost sm" id="mkUndo">復原一個</button> <button class="btn ghost sm" id="mkClear">全部清除</button> <button class="btn sm" id="mkDone">完成</button></span></div>
+    <div class="maskwrap" id="mkWrap"><img src="${s.url}" draggable="false" alt=""></div>`);
+  const wrap = $('#mkWrap'), img = wrap.querySelector('img');
+  const draw = () => { wrap.querySelectorAll('.mask').forEach(m => m.remove());
+    s.masks.forEach(m => { const d = el('div', 'mask'); Object.assign(d.style, { left: m.x / s.w * 100 + '%', top: m.y / s.h * 100 + '%', width: m.w / s.w * 100 + '%', height: m.h / s.h * 100 + '%' }); wrap.append(d); }); };
+  draw();
+  let st = null, live = null;
+  const pos = e => { const r = img.getBoundingClientRect(); return { x: Math.max(0, Math.min(s.w, (e.clientX - r.left) / r.width * s.w)), y: Math.max(0, Math.min(s.h, (e.clientY - r.top) / r.height * s.h)) }; };
+  wrap.onmousedown = e => { e.preventDefault(); st = pos(e); live = el('div', 'mask'); wrap.append(live); };
+  window.onmousemove = e => { if (!st) return; const p = pos(e);
+    const m = { x: Math.min(st.x, p.x), y: Math.min(st.y, p.y), w: Math.abs(p.x - st.x), h: Math.abs(p.y - st.y) };
+    Object.assign(live.style, { left: m.x / s.w * 100 + '%', top: m.y / s.h * 100 + '%', width: m.w / s.w * 100 + '%', height: m.h / s.h * 100 + '%' }); live._m = m; };
+  window.onmouseup = () => { if (!st) return; if (live && live._m && live._m.w > 4 && live._m.h > 4) s.masks.push(live._m); st = null; live = null; draw(); };
+  $('#mkUndo').onclick = () => { s.masks.pop(); draw(); };
+  $('#mkClear').onclick = () => { s.masks = []; draw(); };
+  $('#mkDone').onclick = () => { window.onmousemove = window.onmouseup = null; closeModal(); renderSegs(); };
+}
+
+/* ================= 2. 辨識 ================= */
+function dateMap(cd) {
+  const en = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const lines = [`Today / 今天 → ${cd}`, `Yesterday / 昨天 → ${addDays(cd, -1)}`];
+  for (let i = 2; i <= 7; i++) { const x = addDays(cd, -i), w = new Date(x + 'T00:00:00Z').getUTCDay(); lines.push(`${en[w]} / 星期${WD[w]} → ${x}`); }
+  lines.push('超過一週的訊息 Teams 會直接顯示日期,例如 10/9 或 10/9/2026。');
+  return lines.join('\n');
+}
+async function segJpeg(s) {
+  const bm = await createImageBitmap(s.blob);
+  const c = mkCanvas(s.w, s.h), g = c.getContext('2d');
+  g.fillStyle = '#fff'; g.fillRect(0, 0, s.w, s.h); g.drawImage(bm, 0, 0); bm.close && bm.close();
+  g.fillStyle = '#000'; s.masks.forEach(m => g.fillRect(m.x, m.y, m.w, m.h));
+  return c.toDataURL('image/jpeg', 0.9).split(',')[1];
+}
+async function splitSeg(s) {
+  // 逾時就把片段切成上下兩半(各帶一點重疊)重送
+  const bm = await createImageBitmap(s.blob);
+  const half = Math.ceil(s.h / 2), ov = Math.min(SEG_OV, Math.floor(half / 3));
+  const parts = [[0, half + ov], [half - ov, s.h - (half - ov)]];
+  const out = [];
+  for (const [y, h] of parts) {
+    const c = mkCanvas(s.w, h); c.getContext('2d').drawImage(bm, 0, y, s.w, h, 0, 0, s.w, h);
+    const blob = await toBlob(c);
+    out.push({ file: s.file, k: s.k + (y ? '.2' : '.1'), blob, w: s.w, h, url: URL.createObjectURL(blob),
+      masks: s.masks.map(m => ({ x: m.x, y: m.y - y, w: m.w, h: m.h })).filter(m => m.y + m.h > 0 && m.y < h), skip: false, state: '', msgs: null, depth: (s.depth || 0) + 1 });
+  }
+  bm.close && bm.close();
+  return out;
+}
+async function runOCR(onlyFailed) {
+  if (UP.running) return;
+  const cd = $('#upDate').value || todayISO();
+  UP.capture = cd;
+  const todo = UP.segs.filter(s => !s.skip && s.state !== 'split' && (onlyFailed ? s.state === 'fail' : s.state !== 'done'));
+  if (!todo.length) { assemble(); return; }
+  UP.running = true; $('#btnOCR').disabled = true; $('#btnRetry').disabled = true;
+  const t0 = Date.now(); let n = 0;
+  const info = () => { const done = UP.segs.filter(s => s.state === 'done').length, all = UP.segs.filter(s => !s.skip && s.state !== 'split').length;
+    $('#ocrInfo').textContent = `辨識中 ${done}/${all}…（已 ${Math.round((Date.now() - t0) / 1000)} 秒，同時 ${CONC} 片）`; };
+  const tick = setInterval(info, 1000);
+  const worker = async () => {
+    while (n < todo.length) {
+      const s = todo[n++];
+      s.state = 'run'; renderSegs();
+      let ok = false;
+      for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+        try {
+          const r = await api('transcribe', { images: [await segJpeg(s)], captureDate: cd, dateMap: dateMap(cd), owner: ME.owner });
+          s.msgs = r.messages || []; s.title = r.chat_title; s.truncated = r.truncated; s.state = 'done'; ok = true;
+          if (r.truncated && s.h > 500 && (s.depth || 0) < 2) { ok = false; s.err = { code: 'timeout' }; break; }
+        } catch (e) {
+          s.err = e;
+          if (e.code === 'timeout' && s.h > 500 && (s.depth || 0) < 2) break;
+          if (!['network','rate_limited','server_error','bad_ai','api_error'].includes(e.code)) break;
+          await sleep(2500 * (attempt + 1));
+        }
+      }
+      if (!ok && s.err && s.err.code === 'timeout' && s.h > 500 && (s.depth || 0) < 2) {
+        const parts = await splitSeg(s);
+        const at = UP.segs.indexOf(s);
+        s.state = 'split'; s.skip = true;
+        UP.segs.splice(at + 1, 0, ...parts);
+        todo.push(...parts);
+      } else if (!ok) s.state = 'fail';
+      renderSegs();
+    }
+  };
+  await Promise.all(Array.from({ length: CONC }, worker));
+  clearInterval(tick);
+  UP.running = false; $('#btnOCR').disabled = false;
+  const fails = UP.segs.filter(s => s.state === 'fail').length;
+  $('#ocrInfo').textContent = `完成，用了 ${Math.round((Date.now() - t0) / 1000)} 秒` + (fails ? `，${fails} 片失敗（可按「重試失敗片段」，或略過後繼續）` : '');
+  renderSegs();
+  assemble();
+}
+$('#btnOCR').onclick = () => runOCR(false);
+$('#btnRetry').onclick = () => runOCR(true);
+
+/* 把各片段的訊息串起來:先對齊相鄰片段的重疊區(上一片尾巴 = 這一片開頭),再沿用上一則的發言人/日期/時間 */
+function sameMsg(y, x, strict) {
+  if (y.sender && x.sender && !x.inferS && !y.inferS && y.sender !== x.sender) return false;
+  if (y.time && x.time && !x.inferT && !y.inferT && y.time !== x.time) return false;
+  const a = y.norm, c = x.norm;
+  if (!a || !c) return a === c && !strict;
+  if (a === c) return !strict || a.length >= 2;
+  const min = strict ? 6 : 4;
+  return a.length >= min && c.length >= min && (a.includes(c) || c.includes(a));
+}
+function mergeInto(dup, x) {
+  if (x.norm.length > dup.norm.length) { dup.text = x.text; dup.norm = x.norm; }
+  if (!dup.quote && x.quote) dup.quote = x.quote;
+  if (x.attachments.length > dup.attachments.length) dup.attachments = x.attachments;
+  if (dup.inferS && x.sender && !x.inferS) { dup.sender = x.sender; dup.inferS = false; }
+  if ((!dup.time || dup.inferT) && x.time && !x.inferT) { dup.time = x.time; dup.inferT = false; }
+  if ((!dup.date || dup.inferD) && x.date && !x.inferD) { dup.date = x.date; dup.inferD = false; }
+}
+function assemble() {
+  const out = []; let last = { sender: null, date: null, time: null }, prevTail = [];
+  UP.segs.forEach((s, si) => {
+    if (s.skip || s.state !== 'done' || !s.msgs) return;
+    const cur = s.msgs.map(m => ({ ...m, seg: si, attachments: m.attachments || [], norm: normT((m.text || '') + (m.attachments || []).join('')) }));
+    // 1) 找最長的 k:上一片最後 k 則 = 這一片前 k 則
+    let k = 0;
+    for (let t = Math.min(12, prevTail.length, cur.length); t >= 1; t--) {
+      let ok = true;
+      for (let i = 0; i < t && ok; i++) ok = sameMsg(prevTail[prevTail.length - t + i], cur[i], false);
+      if (ok) { k = t; break; }
+    }
+    for (let i = 0; i < k; i++) mergeInto(prevTail[prevTail.length - k + i], cur[i]);
+    // 2) 對不齊時(某一片漏抄一則),只在頭尾 4 則內用嚴格條件比對
+    const fresh = [];
+    cur.slice(k).forEach((x, i) => {
+      if (k === 0 && i < 4) {
+        const y = prevTail.slice(-4).find(y => sameMsg(y, x, true));
+        if (y) { mergeInto(y, x); return; }
+      }
+      fresh.push(x);
+    });
+    if (k || fresh.length !== cur.length) { const t = out[out.length - 1]; if (t) last = { sender: t.sender, date: t.date, time: t.time }; }
+    // 3) 沿用上一則
+    fresh.forEach(x => {
+      if (!x.sender) { x.sender = last.sender; x.inferS = true; }
+      if (!x.time && x.sender === last.sender) { x.time = last.time; x.inferT = true; }
+      if (!x.date) { x.date = last.date; x.inferD = !!last.date; }
+      out.push(x);
+      last = { sender: x.sender, date: x.date, time: x.time };
+    });
+    prevTail = out.slice(-12);
+  });
+  const firstD = (out.find(m => m.date) || {}).date;
+  out.forEach(m => { if (!m.date && firstD) { m.date = firstD; m.inferD = true; } if (!m.sender) m.sender = '(未知)'; });
+  UP.msgs = out;
+  const tc = {}; UP.segs.forEach(s => { if (s.title) tc[s.title] = (tc[s.title] || 0) + 1; });
+  UP.title = Object.keys(tc).sort((a, b) => tc[b] - tc[a])[0] || null;
+  renderReview();
+}
+
+function suggestGroup() {
+  if (UP.title) return UP.title;
+  const c = {}; UP.msgs.forEach(m => { if (m.sender && m.sender !== ME.owner && m.sender !== '(未知)') c[m.sender] = (c[m.sender] || 0) + 1; });
+  const ppl = Object.keys(c).sort((a, b) => c[b] - c[a]).slice(0, 3);
+  return ppl.join(' & ');
+}
+function matchGroup(name) {
+  const n = name.trim().toLowerCase(); if (!n) return null;
+  return DB.groups.find(g => g.name.toLowerCase() === n) || DB.groups.find(g => g.enabled && (g.name.toLowerCase().includes(n) || n.includes(g.name.toLowerCase()))) || null;
+}
+function renderReview() {
+  $('#upReview').classList.remove('hide');
+  const sel = $('#upGroup').value, pick = $('#grpPick');
+  if (sel === '__auto' || sel === '__new') {
+    const sug = sel === '__auto' ? suggestGroup() : '';
+    const hit = sel === '__auto' ? matchGroup(sug) : null;
+    pick.innerHTML = `<label class="f" style="flex:1">存到哪個對話群（可改；名字跟既有的一樣會直接併進去）
+      <input type="text" id="grpName" list="grpList" value="${esc(hit ? hit.name : sug)}" placeholder="對話群名稱"></label>
+      <datalist id="grpList">${DB.groups.filter(g => g.enabled).map(g => `<option value="${esc(g.name)}">`).join('')}</datalist>
+      <span class="hint" id="grpHint"></span>`;
+    const upd = () => { const h = matchGroup($('#grpName').value); $('#grpHint').textContent = h ? '→ 併入既有的「' + h.name + '」' : '→ 會建立新的對話群'; };
+    $('#grpName').oninput = upd; upd();
+  } else pick.innerHTML = `<div class="hint">存到：<b>${esc(gname(sel))}</b></div>`;
+
+  const box = $('#reviewList'); box.innerHTML = '';
+  const live = UP.msgs.filter(m => !m.del);
+  const dates = [...new Set(UP.msgs.map(m => m.date || ''))];
+  $('#saveInfo').textContent = `共 ${live.length} 則訊息、${dates.filter(Boolean).length} 天`;
+  dates.forEach(d => {
+    const day = el('div', 'daybox');
+    const ms = UP.msgs.filter(m => (m.date || '') === d);
+    day.innerHTML = `<div class="dayhead">${d ? esc(d) + '（' + wday(d) + '）' : '日期不明'} <span class="tag">${ms.filter(m => !m.del).length} 則</span>
+      <input type="date" value="${esc(d)}" title="整天改日期" style="font-weight:400;font-size:12.5px"></div>`;
+    day.querySelector('input').onchange = e => { const v = e.target.value; if (!v) return; ms.forEach(m => { m.date = v; m.inferD = false; }); renderReview(); };
+    ms.forEach(m => {
+      const r = el('div', 'msg' + (m.del ? ' del' : ''));
+      r.innerHTML = `<div class="t" contenteditable="plaintext-only" data-f="time">${esc(m.time || '')}</div>
+        <div class="s" contenteditable="plaintext-only" data-f="sender" title="${esc(m.sender)}">${esc(m.sender)}</div>
+        <div><div class="x" contenteditable="plaintext-only" data-f="text">${esc(m.text)}</div>
+          ${m.quote ? `<div class="q">${esc((m.quote.sender || '') + ' ' + (m.quote.when || ''))}\n${esc(m.quote.text || '')}</div>` : ''}
+          ${m.attachments.length ? `<div class="a">${esc(m.attachments.join('\n'))}</div>` : ''}
+          ${m.inferD ? '<span class="tag">日期推定</span>' : ''}${m.inferS ? '<span class="tag">發言人推定</span>' : ''}<span class="tag">片段 #${m.seg + 1}</span></div>
+        <button class="btn ghost sm" title="${m.del ? '恢復' : '刪除'}">${m.del ? '↺' : '✕'}</button>`;
+      r.querySelectorAll('[data-f]').forEach(f => f.onblur = () => { m[f.dataset.f] = f.textContent.trim(); if (f.dataset.f === 'sender') m.inferS = false; });
+      r.querySelector('button').onclick = () => { m.del = !m.del; renderReview(); };
+      day.append(r);
+    });
+    box.append(day);
+  });
+}
+
+/* ================= 3. 存檔、摘要 ================= */
+async function resolveGroup() {
+  const sel = $('#upGroup').value;
+  if (sel !== '__auto' && sel !== '__new') return sel;
+  const name = ($('#grpName') || {}).value || '';
+  if (!name.trim()) throw { code: 'bad_request', message: '請填對話群名稱' };
+  const hit = matchGroup(name);
+  if (hit) return hit.id;
+  const r = await api('groupSave', { group: { name: name.trim() } });
+  if (!DB.groups.some(g => g.id === r.group.id)) DB.groups.push(r.group);
+  return r.group.id;
+}
+$('#btnSave').onclick = async () => {
+  if (UP.running || !UP.msgs) return;
+  const live = UP.msgs.filter(m => !m.del);
+  const noDate = live.filter(m => !/^\d{4}-\d{2}-\d{2}$/.test(m.date || '')).length;
+  if (noDate) { $('#saveInfo').innerHTML = `<span style="color:var(--stop)">有 ${noDate} 則沒有日期，請用「日期不明」旁的欄位補上。</span>`; return; }
+  UP.running = true; $('#btnSave').disabled = true;
+  const prog = $('#sumProgress'); prog.innerHTML = '';
+  try {
+    $('#saveInfo').innerHTML = '<span class="spin"></span> 存檔中…';
+    const gid = await resolveGroup();
+    const r = await api('saveRun', {
+      groupId: gid, fileName: UP.files.map(f => f.name).join(', '), captureDate: UP.capture,
+      segments: UP.segs.filter(s => !s.skip).length,
+      messages: live.map(m => ({ sender: m.sender, date: m.date, time: m.time, text: m.text, quote: m.quote, attachments: m.attachments, lang: m.lang })),
+    });
+    $('#saveInfo').innerHTML = `已存檔：第 ${runNo(r.runId)} 次上傳，新增 ${r.newCount} 則（其餘 ${r.total - r.newCount} 則已存在，只記下出現紀錄）。正在整理每日摘要與單字…`;
+    GCACHE.delete(gid);
+    await summarizeDates(gid, r.dates, prog);
+    $('#saveInfo').innerHTML += ' 完成。';
+    await loadAll();
+    const go = el('button', 'btn', '查看「' + esc(gname(gid)) + '」');
+    go.onclick = () => { tab('groups'); openGroup(gid); };
+    prog.append(go);
+  } catch (e) {
+    $('#saveInfo').innerHTML = `<span style="color:var(--stop)">${esc(errText(e))}</span>`;
+  } finally { UP.running = false; $('#btnSave').disabled = false; }
+};
+async function summarizeDates(gid, dates, prog) {
+  const rows = {};
+  dates.forEach(d => { const r = el('div', 'hint', `${esc(d)}：<span>等待中</span>`); rows[d] = r.querySelector('span'); prog.append(r); });
+  let i = 0;
+  const worker = async () => {
+    while (i < dates.length) {
+      const d = dates[i++];
+      rows[d].innerHTML = '<span class="spin"></span> 摘要＋單字整理中…';
+      const [a, b] = await Promise.allSettled([api('summarizeDay', { groupId: gid, date: d }), api('vocabDay', { groupId: gid, date: d })]);
+      const fail = [a, b].filter(x => x.status === 'rejected').map(x => errText(x.reason));
+      rows[d].innerHTML = fail.length ? `<span style="color:var(--stop)">${esc(fail.join('；'))}（之後可在對話群裡按「重新整理」）</span>`
+        : `完成${b.value.vocab.length ? '，' + b.value.vocab.length + ' 個單字' : ''}`;
+    }
+  };
+  await Promise.all([worker(), worker()]);
+}
+
+/* ================= 對話群 ================= */
+function renderGroups() {
+  const box = $('#glist'), showOff = $('#showOff').checked;
+  const sumCount = {}; DB.sums.forEach(s => sumCount[s.group] = (sumCount[s.group] || 0) + 1);
+  const gs = DB.groups.filter(g => showOff || g.enabled).slice().sort((a, b) => (b.last || '').localeCompare(a.last || '') || a.name.localeCompare(b.name));
+  box.innerHTML = gs.map(g => `<div class="gi${g.id === CUR_G ? ' on' : ''}${g.enabled ? '' : ' off'}" data-g="${esc(g.id)}">
+    <span class="n" title="${esc(g.name)}">${esc(g.name)}</span><span class="c">${g.count ? g.count + ' 則' : '—'}${g.last ? ' · ' + g.last.slice(5) : ''}</span></div>`).join('') || '<div class="gi hint">還沒有對話群</div>';
+  box.querySelectorAll('[data-g]').forEach(d => d.onclick = () => openGroup(d.dataset.g));
+}
+$('#showOff').onchange = renderGroups;
+$('#btnNewGroup').onclick = () => groupDialog(null);
+function groupDialog(g) {
+  openModal(`<h2 style="margin-top:0">${g ? '編輯對話群' : '新增對話群'}</h2>
+    <div class="row"><label class="f" style="flex:1">名稱（建議跟 Teams 上的聊天室名稱一樣）<input type="text" id="gdName" value="${esc(g ? g.name : '')}"></label></div>
+    <div class="row" style="margin-top:8px"><label class="f" style="flex:1">說明（成員、用途）<input type="text" id="gdNote" value="${esc(g ? g.note : '')}"></label></div>
+    ${g ? `<label style="display:block;margin-top:8px;font-size:13px"><input type="checkbox" id="gdOn" ${g.enabled ? 'checked' : ''}> 啟用（停用後不會出現在上傳選單）</label>` : ''}
+    <div class="row" style="margin-top:14px"><button class="btn" id="gdOk">儲存</button><button class="btn ghost" id="gdNo">取消</button><span class="hint" id="gdInfo"></span></div>`);
+  $('#gdNo').onclick = closeModal;
+  $('#gdOk').onclick = async () => {
+    $('#gdInfo').innerHTML = '<span class="spin"></span>';
+    try {
+      const r = await api('groupSave', { group: { id: g ? g.id : '', name: $('#gdName').value, note: $('#gdNote').value, enabled: g ? $('#gdOn').checked : true } });
+      const i = DB.groups.findIndex(x => x.id === r.group.id);
+      if (i >= 0) DB.groups[i] = { ...DB.groups[i], ...r.group }; else DB.groups.push(r.group);
+      closeModal(); fillGroupSelect(); renderGroups(); if (CUR_G === r.group.id) openGroup(r.group.id);
+    } catch (e) { $('#gdInfo').textContent = errText(e); }
+  };
+}
+async function loadGroup(gid) {
+  if (!GCACHE.has(gid)) GCACHE.set(gid, await api('groupData', { groupId: gid }));
+  return GCACHE.get(gid);
+}
+async function openGroup(gid, focus) {
+  CUR_G = gid; renderGroups();
+  const g = DB.groups.find(x => x.id === gid); if (!g) return;
+  const main = $('#gmain');
+  main.innerHTML = `<div class="card"><span class="spin"></span> 載入「${esc(g.name)}」…</div>`;
+  let data;
+  try { data = await loadGroup(gid); } catch (e) { main.innerHTML = `<div class="err">${esc(errText(e))}</div>`; return; }
+  const byDate = {};
+  data.messages.forEach(m => (byDate[m.date || ''] = byDate[m.date || ''] || []).push(m));
+  const sums = {}; data.summaries.forEach(s => sums[s.date] = s);
+  const dates = [...new Set([...Object.keys(byDate), ...Object.keys(sums)])].sort().reverse();
+  main.innerHTML = '';
+  const head = el('div', 'card');
+  head.innerHTML = `<div class="row" style="align-items:center"><h2 style="margin:0;flex:1">${esc(g.name)}</h2>
+    <button class="btn ghost sm" id="gEdit">編輯</button></div>
+    <div class="hint">${esc(g.note || '')}${g.note ? '・' : ''}${data.messages.length} 則訊息、${dates.filter(Boolean).length} 天</div>`;
+  main.append(head);
+  head.querySelector('#gEdit').onclick = () => groupDialog(g);
+  if (!dates.length) main.append(el('div', 'hint', '這個對話群還沒有資料。到「上傳分析」放截圖。'));
+  dates.forEach(d => main.append(dayCard(gid, d, byDate[d] || [], sums[d], { showGroup: false })));
+  if (focus) focusMsg(focus.date, focus.msg);
+}
+function sortMsgs(ms) { return ms.slice().sort((a, b) => (a.time && b.time && a.time !== b.time) ? (a.time < b.time ? -1 : 1) : a.i - b.i); }
+function msgHTML(m) {
+  const runs = String(m.runs || '').split(',').filter(Boolean).map(r => {
+    const ri = runInfo(r);
+    return `<a class="run" data-run="${esc(r)}" title="${esc(ri ? '第 ' + runNo(r) + ' 次上傳 ' + ri.time + '\n' + ri.file : r)}">#${runNo(r)}</a>`;
+  }).join('');
+  return `<div class="msg" data-msg="${esc(m.id)}"><div class="t">${esc(m.time || '')}</div><div class="s" title="${esc(m.sender)}">${esc(m.sender)}</div>
+    <div><div class="x">${br(m.text)}</div>${m.quote ? `<div class="q">${br(m.quote)}</div>` : ''}${m.attach ? `<div class="a">${br(m.attach)}</div>` : ''}</div>
+    <div style="white-space:nowrap">${runs}</div></div>`;
+}
+function refLinks(refs) { return (refs || []).map(r => `<a class="ref" data-ref="${esc(r)}">↗原文</a>`).join(''); }
+function sumHTML(s) {
+  if (!s) return '<div class="hint">還沒整理摘要。</div>';
+  const bi = s.bilingual;
+  const list = (title, arr, todo) => {
+    if (!arr || !arr.length) return '';
+    if (todo) return `<div class="sec">${title}</div><table class="bi"><tr><th style="width:120px">負責</th><th>事項</th>${bi ? '<th>English</th>' : ''}<th style="width:110px">期限</th></tr>
+      ${arr.map(x => `<tr><td>${esc(x.who || '—')}</td><td>${esc(x.zh)} ${refLinks(x.refs)}</td>${bi ? `<td class="en">${esc(x.en)}</td>` : ''}<td>${esc(x.due || '')}</td></tr>`).join('')}</table>`;
+    if (bi) return `<div class="sec">${title}</div><table class="bi"><tr><th>中文</th><th>English</th></tr>
+      ${arr.map(x => `<tr><td>${esc(x.zh)} ${refLinks(x.refs)}</td><td class="en">${esc(x.en)}</td></tr>`).join('')}</table>`;
+    return `<div class="sec">${title}</div><ul class="pl">${arr.map(x => `<li>${esc(x.zh)} ${refLinks(x.refs)}</li>`).join('')}</ul>`;
+  };
+  return list('重點', s.points) + list('待辦', s.todos, true) + list('決議', s.decisions) + list('待追問', s.questions)
+    + (s.truncated ? '<div class="hint">（摘要可能不完整，可以按「重新整理」）</div>' : '');
+}
+function dayCard(gid, date, msgs, sumRow, opt) {
+  const s = sumRow && sumRow.summary;
+  const card = el('div', 'dcard'); card.dataset.date = date; card.dataset.group = gid;
+  const voc = DB.vocab.filter(v => v.group === gid && v.date === date);
+  const title = s ? (s.title.zh + (s.bilingual && s.title.en ? ' ／ ' + s.title.en : '')) : '';
+  card.innerHTML = `<header><h3>${opt.showGroup ? esc(gname(gid)) : (date ? esc(date) + '（' + wday(date) + '）' : '日期不明')}</h3>
+    <span class="ttl">${esc(title)}${s && s.bilingual ? ' <span class="tag">中英對照</span>' : ''}</span>
+    ${date ? '<button class="btn ghost sm" data-act="resum">' + (s ? '重新整理' : '整理摘要') + '</button>' : ''}
+    <button class="btn ghost sm" data-act="raw">原文 ${msgs.length} 則 ▾</button>
+    ${opt.showGroup ? '<button class="btn ghost sm" data-act="go">到對話群</button>' : ''}</header>
+    <div class="body">${sumHTML(s)}
+      ${voc.length ? `<div class="sec">單字</div><div class="chips">${voc.map((v, i) => `<span class="chip" data-v="${i}"><b>${esc(v.term)}</b> ${esc(v.zh)}</span>`).join('')}</div>` : ''}
+      <div class="raw hide" style="margin-top:10px">${sortMsgs(msgs).map(msgHTML).join('')}</div></div>`;
+  const raw = card.querySelector('.raw');
+  card.querySelector('[data-act=raw]').onclick = () => raw.classList.toggle('hide');
+  const go = card.querySelector('[data-act=go]'); if (go) go.onclick = () => { tab('groups'); openGroup(gid, { date }); };
+  const rs = card.querySelector('[data-act=resum]');
+  if (rs) rs.onclick = async () => {
+    rs.disabled = true; rs.innerHTML = '<span class="spin"></span> 整理中';
+    const [a, b] = await Promise.allSettled([api('summarizeDay', { groupId: gid, date }), api('vocabDay', { groupId: gid, date })]);
+    if (a.status === 'rejected' || b.status === 'rejected') { rs.disabled = false; rs.textContent = '失敗，再試一次'; rs.title = errText((a.reason || b.reason)); return; }
+    GCACHE.delete(gid); await loadAll();
+    if (opt.showGroup) openDate(date); else openGroup(gid, { date });
+  };
+  card.querySelectorAll('.ref').forEach(a => a.onclick = () => { raw.classList.remove('hide'); flash(card.querySelector(`[data-msg="${CSS.escape(a.dataset.ref)}"]`)); });
+  card.querySelectorAll('[data-v]').forEach(c => c.onclick = () => vocabPop(voc[+c.dataset.v]));
+  card.querySelectorAll('[data-run]').forEach(a => a.onclick = () => { tab('runs'); openRun(a.dataset.run); });
+  return card;
+}
+function flash(node) { if (!node) return; node.scrollIntoView({ behavior: 'smooth', block: 'center' }); node.classList.add('flash'); setTimeout(() => node.classList.remove('flash'), 2500); }
+function focusMsg(date, msg) {
+  const card = [...document.querySelectorAll('#gmain .dcard')].find(c => c.dataset.date === date);
+  if (!card) return;
+  if (msg) { card.querySelector('.raw').classList.remove('hide'); flash(card.querySelector(`[data-msg="${CSS.escape(msg)}"]`)); }
+  else card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function vocabPop(v) {
+  if (!v) return;
+  openModal(`<h2 style="margin-top:0">${esc(v.term)} <span class="hint">${esc(v.zh)}</span></h2>
+    <p>${esc(v.explain)}</p>
+    <p class="hint">對話原句：</p><p>${esc(v.example)}</p>${v.example_zh ? `<p class="hint">${esc(v.example_zh)}</p>` : ''}
+    <p class="hint">出處：${esc(gname(v.group))} ・ ${esc(v.date)}${v.run ? ' ・ 第 ' + runNo(v.run) + ' 次上傳' : ''}</p>
+    <div class="row"><button class="btn" id="vpGo">看原文</button><button class="btn ghost" id="vpNo">關閉</button></div>`);
+  $('#vpNo').onclick = closeModal;
+  $('#vpGo').onclick = () => { closeModal(); tab('groups'); openGroup(v.group, { date: v.date, msg: v.msg }); };
+}
+
+/* ================= 依日期 ================= */
+function renderDates() {
+  const c = {}; DB.sums.forEach(s => c[s.date] = (c[s.date] || 0) + 1);
+  const ds = Object.keys(c).sort().reverse();
+  $('#dlist').innerHTML = ds.map(d => `<div class="gi${d === CUR_D ? ' on' : ''}" data-d="${d}"><span class="n">${d}（${wday(d)}）</span><span class="c">${c[d]} 群</span></div>`).join('')
+    || '<div class="gi hint">還沒有摘要</div>';
+  $('#dlist').querySelectorAll('[data-d]').forEach(x => x.onclick = () => openDate(x.dataset.d));
+}
+async function openDate(d) {
+  CUR_D = d; renderDates();
+  const main = $('#dmain'); main.innerHTML = '<div class="card"><span class="spin"></span> 載入中…</div>';
+  let data; try { data = await api('dateData', { date: d }); } catch (e) { main.innerHTML = `<div class="err">${esc(errText(e))}</div>`; return; }
+  main.innerHTML = `<div class="card"><h2 style="margin:0">${d}（${wday(d)}）</h2><div class="hint">${data.summaries.length} 個對話群有摘要</div></div>`;
+  const gids = [...new Set([...data.summaries.map(s => s.group), ...data.messages.map(m => m.group)])];
+  gids.forEach(g => main.append(dayCard(g, d, data.messages.filter(m => m.group === g), data.summaries.find(s => s.group === g), { showGroup: true })));
+}
+
+/* ================= 單字 ================= */
+const VS = () => LS.get('cd_vocab', {});
+function vocabAgg() {
+  const m = new Map();
+  DB.vocab.forEach(v => {
+    const k = v.term.toLowerCase();
+    if (!m.has(k)) m.set(k, { key: k, term: v.term, zh: v.zh, explain: v.explain, items: [] });
+    m.get(k).items.push(v);
+  });
+  return [...m.values()].map(a => { a.items.sort((x, y) => (y.date || '').localeCompare(x.date || '')); a.last = a.items[0].date; return a; })
+    .sort((a, b) => (b.last || '').localeCompare(a.last || '') || a.term.localeCompare(b.term));
+}
+function renderVocab() {
+  const vg = $('#vg'), keep = vg.value;
+  const gs = [...new Set(DB.vocab.map(v => v.group))];
+  vg.innerHTML = '<option value="">全部</option>' + gs.map(g => `<option value="${esc(g)}">${esc(gname(g))}</option>`).join('');
+  vg.value = gs.includes(keep) ? keep : '';
+  const q = $('#vq').value.trim().toLowerCase(), st = VS();
+  const list = vocabAgg().filter(a => (!q || (a.term + a.zh + a.explain).toLowerCase().includes(q)) && (!vg.value || a.items.some(v => v.group === vg.value)));
+  const known = list.filter(a => (st[a.key] || {}).ok > (st[a.key] || {}).ng).length;
+  $('#vstat').textContent = `${list.length} 個單字，已記住 ${known} 個`;
+  $('#vlist').innerHTML = list.map(a => {
+    const s = st[a.key] || {};
+    return `<div class="vrow"><div><div class="term">${esc(a.term)}</div><div class="hint">${s.ok || s.ng ? `記住 ${s.ok || 0}・不熟 ${s.ng || 0}` : '還沒練過'}</div></div>
+      <div><b>${esc(a.zh)}</b> <span class="hint">出現 ${a.items.length} 次</span><div>${esc(a.explain)}</div>
+      <div class="hint" style="margin-top:3px">「${esc(a.items[0].example)}」</div>
+      <div class="src">${a.items.slice(0, 6).map((v, i) => `<a data-k="${esc(a.key)}" data-i="${i}">${esc(gname(v.group))} · ${esc(v.date)}${v.run ? ' · #' + runNo(v.run) : ''}</a>`).join('')}</div></div></div>`;
+  }).join('') || '<div class="hint">還沒有單字。上傳含英文的對話後會自動擷取。</div>';
+  const agg = new Map(list.map(a => [a.key, a]));
+  $('#vlist').querySelectorAll('[data-k]').forEach(x => x.onclick = () => { const v = agg.get(x.dataset.k).items[+x.dataset.i]; tab('groups'); openGroup(v.group, { date: v.date, msg: v.msg }); });
+}
+$('#vq').oninput = renderVocab; $('#vg').onchange = renderVocab;
+$('#btnPractice').onclick = () => {
+  const st = VS(), g = $('#vg').value;
+  let deck = vocabAgg().filter(a => !g || a.items.some(v => v.group === g));
+  if (!deck.length) return;
+  const score = a => { const s = st[a.key] || {}; return (s.ok || 0) - (s.ng || 0) * 2 + Math.random(); };
+  deck.sort((a, b) => score(a) - score(b)); deck = deck.slice(0, 20);
+  let i = 0;
+  const box = $('#practice'); box.classList.remove('hide');
+  const show = (reveal) => {
+    if (i >= deck.length) { box.innerHTML = `<div class="card flash-card"><div class="big">練完了 👏</div><div class="hint">${deck.length} 個單字</div><button class="btn" id="pcEnd">結束</button></div>`;
+      $('#pcEnd').onclick = () => { box.classList.add('hide'); renderVocab(); }; return; }
+    const a = deck[i], v = a.items[0];
+    const ex = esc(v.example).replace(new RegExp(a.term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'ig'), m => `<mark>${m}</mark>`);
+    box.innerHTML = `<div class="card flash-card"><div class="hint">${i + 1} / ${deck.length}</div><div class="big">${esc(a.term)}</div>
+      <div class="ex">${ex}</div>
+      ${reveal ? `<div style="font-size:18px;font-weight:700">${esc(a.zh)}</div><div style="margin:6px 0">${esc(a.explain)}</div>
+        ${v.example_zh ? `<div class="hint">${esc(v.example_zh)}</div>` : ''}<div class="hint" style="margin-top:6px">出處：${esc(gname(v.group))} · ${esc(v.date)}</div>
+        <div class="row" style="justify-content:center;margin-top:14px"><button class="btn ghost" id="pcNg">不熟</button><button class="btn" id="pcOk">記住了</button></div>`
+      : `<div class="row" style="justify-content:center;margin-top:14px"><button class="btn" id="pcShow">看答案</button></div>`}
+      <div style="margin-top:10px"><a href="#" id="pcStop" class="hint">結束練習</a></div></div>`;
+    const mark = ok => { const s = VS(); const r = s[a.key] || { ok: 0, ng: 0 }; ok ? r.ok++ : r.ng++; r.t = Date.now(); s[a.key] = r; LS.set('cd_vocab', s); i++; show(false); };
+    if (reveal) { $('#pcOk').onclick = () => mark(true); $('#pcNg').onclick = () => mark(false); }
+    else $('#pcShow').onclick = () => show(true);
+    $('#pcStop').onclick = e => { e.preventDefault(); box.classList.add('hide'); renderVocab(); };
+  };
+  show(false);
+};
+
+/* ================= 上傳紀錄 ================= */
+function renderRuns() {
+  $('#runTable').innerHTML = '<tr><th>#</th><th>時間</th><th>對話群</th><th>檔案</th><th>片數</th><th>訊息</th><th>新增</th><th>日期範圍</th></tr>' +
+    DB.runs.map(r => `<tr class="click" data-run="${esc(r.id)}"><td>${runNo(r.id)}</td><td>${esc(r.time)}</td><td>${esc(gname(r.group))}</td>
+      <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.file)}">${esc(r.file)}</td>
+      <td>${esc(r.segments)}</td><td>${esc(r.total)}</td><td>${esc(r.added)}</td><td>${esc(r.from)}${r.to && r.to !== r.from ? ' ~ ' + esc(r.to) : ''}</td></tr>`).join('');
+  $('#runTable').querySelectorAll('[data-run]').forEach(t => t.onclick = () => openRun(t.dataset.run));
+}
+async function openRun(id) {
+  const r = runInfo(id), box = $('#runDetail');
+  box.innerHTML = '<div class="card"><span class="spin"></span> 載入中…</div>';
+  try {
+    const d = await api('runData', { runId: id });
+    box.innerHTML = '';
+    const c = el('div', 'card');
+    c.innerHTML = `<h2>第 ${runNo(id)} 次上傳 ${r ? '・' + esc(r.time) + '・' + esc(gname(r.group)) : ''}</h2>
+      <div class="hint">這次截圖裡辨識到的 ${d.messages.length} 則訊息（包含之前已經存過的）。</div>`;
+    const byD = {}; d.messages.forEach(m => (byD[m.date] = byD[m.date] || []).push(m));
+    Object.keys(byD).sort().forEach(dd => { const x = el('div', 'daybox'); x.innerHTML = `<div class="dayhead">${esc(dd)}（${wday(dd)}）</div>` + sortMsgs(byD[dd]).map(msgHTML).join(''); c.append(x); });
+    if (r) { const go = el('button', 'btn ghost sm', '到對話群'); go.onclick = () => { tab('groups'); openGroup(r.group, { date: r.from }); }; c.querySelector('h2').append(' ', go); }
+    box.append(c);
+    box.scrollIntoView({ behavior: 'smooth' });
+  } catch (e) { box.innerHTML = `<div class="err">${esc(errText(e))}</div>`; }
+}
+
+/* ================= 搜尋 ================= */
+async function doSearch() {
+  const q = $('#sq').value.trim(); if (!q) return;
+  const box = $('#sres'); box.innerHTML = '<div class="card"><span class="spin"></span> 搜尋中…</div>';
+  try {
+    const r = await api('search', { q });
+    const c = el('div', 'card'); c.innerHTML = `<h2>${r.messages.length} 筆${r.messages.length >= 300 ? '（只列前 300 筆）' : ''}</h2>`;
+    r.messages.slice().sort((a, b) => (b.date || '').localeCompare(a.date || '') || (a.time || '').localeCompare(b.time || '')).forEach(m => {
+      const x = el('div'); x.innerHTML = `<div class="hint" style="margin-top:6px"><a href="#" data-g="${esc(m.group)}" data-d="${esc(m.date)}" data-m="${esc(m.id)}">${esc(gname(m.group))} · ${esc(m.date)}</a></div>` + msgHTML(m);
+      c.append(x);
+    });
+    box.innerHTML = ''; box.append(c);
+    c.querySelectorAll('[data-g]').forEach(a => a.onclick = e => { e.preventDefault(); tab('groups'); openGroup(a.dataset.g, { date: a.dataset.d, msg: a.dataset.m }); });
+    c.querySelectorAll('[data-run]').forEach(a => a.onclick = () => { tab('runs'); openRun(a.dataset.run); });
+  } catch (e) { box.innerHTML = `<div class="err">${esc(errText(e))}</div>`; }
+}
+$('#btnSearch').onclick = doSearch;
+$('#sq').onkeydown = e => { if (e.key === 'Enter') doSearch(); };
+
+/* ================= PNG 解碼(不受瀏覽器尺寸限制,串流逐段) ================= */
+function pngHeader(u8) {
+  const dv = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+  let p = 8, w = 0, h = 0, depth = 0, ctype = 0, interlace = 0, plte = null, trns = null;
+  const idat = [];
+  while (p + 8 <= u8.length) {
+    const len = dv.getUint32(p), type = String.fromCharCode(u8[p+4], u8[p+5], u8[p+6], u8[p+7]);
+    const s = p + 8, e = s + len;
+    if (type === "IHDR") { w = dv.getUint32(s); h = dv.getUint32(s+4); depth = u8[s+8]; ctype = u8[s+9]; interlace = u8[s+12]; }
+    else if (type === "PLTE") plte = u8.subarray(s, e);
+    else if (type === "tRNS") trns = u8.subarray(s, e);
+    else if (type === "IDAT") idat.push([s, e]);
+    else if (type === "IEND") break;
+    p = e + 4;
+  }
+  if (!w || !h) throw new Error("找不到 IHDR");
+  if (interlace) throw new Error("是交錯式(interlaced)PNG，不支援；ShareX 預設不會存成這種");
+  if (depth !== 8) throw new Error(`色深 ${depth} 位元不支援，只支援 8 位元（ShareX 預設）`);
+  if (![0,2,3,4,6].includes(ctype)) throw new Error("色彩類型不支援");
+  const ch = { 0:1, 2:3, 3:1, 4:2, 6:4 }[ctype];
+  return { w, h, depth, ctype, ch, plte, trns, idat };
+}
+
+async function* pngSegments(u8, hdr, segs) {
+  const { w: W, ch, ctype, plte, trns, idat } = hdr;
+  const rowLen = 1 + W * ch;
+  // 把 IDAT 丟進 DecompressionStream,邊解壓邊處理
+  const ds = new DecompressionStream("deflate");
+  const writer = ds.writable.getWriter();
+  (async () => { try { for (const [s, e] of idat) await writer.write(u8.subarray(s, e)); await writer.close(); } catch (_) {} })();
+  const reader = ds.readable.getReader();
+
+  let carry = new Uint8Array(0), prev = new Uint8Array(rowLen - 1), cur = new Uint8Array(rowLen - 1);
+  let y = 0, segIdx = 0;
+  let segBuf = null, segRows = 0, segStart = segs[0][0], segH = segs[0][1];
+  const rgba = new Uint8ClampedArray(W * 4);
+  const pending = [];     // 等著輸出的 canvas
+  const newSeg = () => { segBuf = new Uint8ClampedArray(W * 4 * segH); segRows = 0; };
+  newSeg();
+
+  const emitRow = () => {
+    // 轉成 RGBA
+    if (ctype === 6) rgba.set(cur);
+    else if (ctype === 2) for (let x = 0, j = 0; x < W; x++, j += 3) { rgba[x*4] = cur[j]; rgba[x*4+1] = cur[j+1]; rgba[x*4+2] = cur[j+2]; rgba[x*4+3] = 255; }
+    else if (ctype === 0) for (let x = 0; x < W; x++) { const v = cur[x]; rgba[x*4] = v; rgba[x*4+1] = v; rgba[x*4+2] = v; rgba[x*4+3] = 255; }
+    else if (ctype === 4) for (let x = 0; x < W; x++) { const v = cur[x*2]; rgba[x*4] = v; rgba[x*4+1] = v; rgba[x*4+2] = v; rgba[x*4+3] = cur[x*2+1]; }
+    else if (ctype === 3) for (let x = 0; x < W; x++) { const i = cur[x]; rgba[x*4] = plte[i*3]; rgba[x*4+1] = plte[i*3+1]; rgba[x*4+2] = plte[i*3+2]; rgba[x*4+3] = trns && i < trns.length ? trns[i] : 255; }
+    // 這一列屬於哪些段(重疊時可能兩段都要)
+    for (let k = segIdx; k < segs.length; k++) {
+      const [sy, sh] = segs[k];
+      if (y < sy) break;
+      if (y >= sy + sh) continue;
+      if (k === segIdx) { segBuf.set(rgba, (y - sy) * W * 4); segRows++; }
+      else if (k === segIdx + 1) {
+        if (!nextBuf) nextBuf = new Uint8ClampedArray(W * 4 * sh);
+        nextBuf.set(rgba, (y - sy) * W * 4);
+      }
+    }
+    if (y === segStart + segH - 1) {
+      const c = document.createElement("canvas"); c.width = W; c.height = segH;
+      c.getContext("2d").putImageData(new ImageData(segBuf, W, segH), 0, 0);
+      pending.push(c);
+      segIdx++;
+      if (segIdx < segs.length) {
+        segStart = segs[segIdx][0]; segH = segs[segIdx][1];
+        segBuf = nextBuf || new Uint8ClampedArray(W * 4 * segH); nextBuf = null;
+      }
+    }
+    y++;
+  };
+  let nextBuf = null;
+
+  const unfilter = (ft) => {
+    const bpp = ch;
+    if (ft === 0) return;
+    if (ft === 1) { for (let i = bpp; i < cur.length; i++) cur[i] = (cur[i] + cur[i-bpp]) & 255; return; }
+    if (ft === 2) { for (let i = 0; i < cur.length; i++) cur[i] = (cur[i] + prev[i]) & 255; return; }
+    if (ft === 3) { for (let i = 0; i < cur.length; i++) { const a = i >= bpp ? cur[i-bpp] : 0; cur[i] = (cur[i] + ((a + prev[i]) >> 1)) & 255; } return; }
+    if (ft === 4) { for (let i = 0; i < cur.length; i++) {
+      const a = i >= bpp ? cur[i-bpp] : 0, b = prev[i], c = i >= bpp ? prev[i-bpp] : 0;
+      const p = a + b - c, pa = Math.abs(p - a), pb = Math.abs(p - b), pc = Math.abs(p - c);
+      cur[i] = (cur[i] + (pa <= pb && pa <= pc ? a : pb <= pc ? b : c)) & 255; } return; }
+    throw new Error("未知的 filter " + ft);
+  };
+
+  while (y < hdr.h) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    let buf = value;
+    if (carry.length) { const m = new Uint8Array(carry.length + value.length); m.set(carry); m.set(value, carry.length); buf = m; carry = new Uint8Array(0); }
+    let off = 0;
+    while (off + rowLen <= buf.length && y < hdr.h) {
+      const ft = buf[off];
+      cur.set(buf.subarray(off + 1, off + rowLen));
+      unfilter(ft);
+      emitRow();
+      const t = prev; prev = cur; cur = t;
+      off += rowLen;
+      if (pending.length) { while (pending.length) yield pending.shift(); }
+    }
+    if (off < buf.length) carry = buf.slice(off);
+  }
+  if (y < hdr.h) throw new Error(`資料不完整，只解到第 ${y} 列（共 ${hdr.h} 列）`);
+  while (pending.length) yield pending.shift();
+}
+
+window.addEventListener('unhandledrejection', e => gerr('發生錯誤：' + ((e.reason && (e.reason.message || errText(e.reason))) || e.reason)));
+loadAll();
+</script>
+</body>
+</html>
