@@ -812,19 +812,26 @@ function eventsDay(user, req) {
 }
 
 /* ===== 8. 期間報告 ===== */
-const REPORT_SYSTEM = [
+const REPORT_INTRO = [
   '你是台灣離岸風場運維現場協調(AOC)的資深助理,要幫 AOC 同仁掌握一段期間內「整個專案」的走向。',
-  '輸入是這段期間各對話群抽出的事件(e 開頭編號)與每日摘要標題。資訊散在不同群組,你的工作是把它們串起來:',
-  '1. overview:3 到 6 句繁體中文,說明這段期間的整體走向、最重要的變化、需要特別注意的事。',
-  '2. threads:把同一件事(可能跨群組、跨多天)串成議題,最多 8 個,挑最重要的。每個議題:topic、status(一句話現在的狀態)、',
-  '   timeline(依日期排序,最多 6 步,每步 {date, text, events:[編號]})、next(下一步或待確認事項,沒有就空字串)、priority(high/medium/low)。',
-  '3. merge:不同群組或不同天講的「其實是同一件事」的事件編號分組,例如 [["e3","e17"]]。',
-  '4. updates:後來的對話顯示某事件已經完成、取消或改期,列 {event, status(done/cancelled/changed), note(繁中一句說明,改期要寫新日期)}。',
-  '5. highlights:最需要 AOC 注意的事件編號,最多 8 個。',
-  '6. resolved:「待追問」(q 開頭編號)裡,後來的對話已經有答案的,列 {q, note(繁中一句說明答案)}。',
+  '輸入是這段期間各對話群抽出的事件(e 開頭編號)、每日摘要標題與待追問(q 開頭編號)。資訊散在不同群組。',
   '只根據輸入內容,不要臆測。文字用繁體中文(台灣用語),人名、船名、風機編號照原文。',
-  '只輸出 JSON:{"overview":"","threads":[{"topic":"","status":"","priority":"","timeline":[{"date":"","text":"","events":[]}],"next":"","events":[]}],"merge":[],"updates":[],"highlights":[],"resolved":[]}',
-].join('\n');
+];
+// 第一次呼叫:整體走向+跨群組議題
+const REPORT_SYSTEM_A = REPORT_INTRO.concat([
+  '1. overview:3 到 5 句、250 字以內,說明整體走向、最重要的變化、需要特別注意的事。',
+  '2. threads:把同一件事(可能跨群組、跨多天)串成議題,最多 6 個,挑最重要的。每個議題:topic、status(一句話,40 字內)、',
+  '   priority(high/medium/low)、timeline(依日期排序,最多 5 步,每步 {date(MM/DD), text(40 字內), events:[最多 3 個編號]})、next(下一步,40 字內,沒有就空字串)。',
+  '只輸出 JSON:{"overview":"","threads":[{"topic":"","status":"","priority":"","timeline":[{"date":"","text":"","events":[]}],"next":""}]}',
+]).join('\n');
+// 第二次呼叫:合併重複、狀態更新、重點、待追問答案
+const REPORT_SYSTEM_B = REPORT_INTRO.concat([
+  '1. merge:不同群組或不同天講的「其實是同一件事」的事件編號分組,例如 [["e3","e17"]]。',
+  '2. updates:後來的事件顯示某事件已經完成、取消或改期,列 {event, status(done/cancelled/changed), note(30 字內,改期要寫新日期)}。',
+  '3. highlights:最需要 AOC 注意的事件編號,最多 8 個。',
+  '4. resolved:待追問(q 開頭)裡,後來的事件或摘要已經有答案的,列 {q, note(30 字內說明答案)}。',
+  '只輸出 JSON:{"merge":[],"updates":[],"highlights":[],"resolved":[]}',
+]).join('\n');
 
 function periodReport(user, req) {
   const from = validDate(req.from), to = validDate(req.to);
@@ -864,8 +871,10 @@ function periodReport(user, req) {
   const prompt = '期間:' + from + ' ~ ' + to + '\n有資料的對話群:' + withData.join('、') + '\n\n事件(' + evs.length + ' 個):\n' +
     clip(evLines.join('\n'), 90000) + '\n\n每日摘要標題:\n' + clip(sumLines.join('\n'), 20000) +
     (qLines.length ? '\n\n待追問:\n' + clip(qLines.join('\n'), 20000) : '');
-  const r = callClaude(user, 'report', MODELS.report, [{ type: 'text', text: prompt }], MAX_TOKENS.report, REPORT_SYSTEM, 0);
-  const j = parseLoose(r.text) || {};
+  const ra = callClaude(user, 'report', MODELS.report, [{ type: 'text', text: prompt }], MAX_TOKENS.report, REPORT_SYSTEM_A, 0);
+  const rb = callClaude(user, 'report', MODELS.report, [{ type: 'text', text: prompt }], MAX_TOKENS.report, REPORT_SYSTEM_B, 0);
+  const j = Object.assign({}, parseLoose(rb.text) || {}, parseLoose(ra.text) || {});
+  const r = { truncated: ra.truncated || rb.truncated };
   const okId = {}; evs.forEach(e => okId[e.id] = true);
   const ids = v => (Array.isArray(v) ? v : []).map(String).filter(x => okId[x]);
   const rep = {
@@ -874,7 +883,7 @@ function periodReport(user, req) {
     threads: (Array.isArray(j.threads) ? j.threads : []).slice(0, 10).map(t => ({
       topic: clip(t.topic || '', 80), status: clip(t.status || '', 300), next: clip(t.next || '', 300),
       priority: ['high', 'medium', 'low'].indexOf(t.priority) >= 0 ? t.priority : 'medium', events: ids(t.events),
-      timeline: (Array.isArray(t.timeline) ? t.timeline : []).slice(0, 8).map(s => ({ date: clip(s.date || '', 20), text: clip(s.text || '', 300), events: ids(s.events) })),
+      timeline: (Array.isArray(t.timeline) ? t.timeline : []).slice(0, 8).map(s => ({ date: clip(s.date || '', 20), text: clip(s.text || '', 300), events: ids(s.events).slice(0, 3) })),
     })),
     merge: (Array.isArray(j.merge) ? j.merge : []).map(ids).filter(m => m.length > 1),
     updates: (Array.isArray(j.updates) ? j.updates : []).filter(u => u && okId[u.event]).map(u => ({ event: u.event,

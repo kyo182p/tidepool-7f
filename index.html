@@ -1435,7 +1435,7 @@ function showReport(rep) {
       ${threads.map(t => { const gs = [...new Set(t.events.concat(...t.timeline.map(s => s.events)).map(id => (map.get(id) || {}).groupName).filter(Boolean))];
         return `<div class="thread ${t.priority}"><h4>${esc(t.topic)}<span class="pill ${t.priority}">${{ high: '高', medium: '中', low: '低' }[t.priority]}</span>${gs.map(g => `<span class="pill g">${esc(g)}</span>`).join('')}</h4>
           <div><b>現況：</b>${esc(t.status)}</div>
-          <div class="tl">${t.timeline.map(s => `<div><b>${esc(s.date)}</b>${esc(s.text)} ${s.events.map(id => { const e = map.get(id); return e ? `<a class="ref" data-go="${esc(e.group)}|${esc(e.src)}|${esc(e.msgs[0] || '')}">↗</a>` : ''; }).join('')}</div>`).join('')}</div>
+          <div class="tl">${t.timeline.map(s => `<div><b>${esc(s.date)}</b>${esc(s.text)} ${s.events.slice(0, 3).map(id => { const e = map.get(id); return e ? `<a class="ref" data-go="${esc(e.group)}|${esc(e.src)}|${esc(e.msgs[0] || '')}">↗</a>` : ''; }).join('')}</div>`).join('')}</div>
           ${t.next ? `<div><b>下一步：</b>${esc(t.next)}</div>` : ''}</div>`; }).join('')}` : ''}
     <div class="rp-sec">期限與時程<span class="n">紅字＝日期已過但對話中沒看到完成</span></div>
     ${bucket('已過', dated.filter(e => e.date < today))}${bucket('今天起 7 天內', dated.filter(e => e.date >= today && e.date <= wk))}
