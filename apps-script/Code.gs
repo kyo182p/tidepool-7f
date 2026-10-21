@@ -19,18 +19,21 @@ const MODELS = {
   match:      'claude-opus-5-5',   // 附件配對到訊息
   events:     'claude-opus-5-5',   // 每日事件抽取(期限、決策、突發、人員、船機)
   report:     'claude-opus-5-5',   // 期間報告
+  link:       'claude-opus-5-5',   // 信件 ↔ 對話 找相關訊息
 };
 // 每百萬 token 美元 [輸入, 輸出],只用來估算「用量」工作表
 const PRICE = { 'claude-opus-5-5': [5, 25], 'claude-sonnet-5-5': [3, 15], 'claude-haiku-4-5-20251001': [1, 5] };
 // 實測 Opus 約每秒 100 token;UrlFetchApp 約 60 秒逾時,所以單次輸出抓 4500 以內
-const MAX_TOKENS = { transcribe: 3500, summary: 4500, vocab: 3500, attach: 4000, match: 1000, events: 4000, report: 4500 };
+const MAX_TOKENS = { transcribe: 3500, summary: 4500, vocab: 3500, attach: 4000, match: 1000, events: 4000, report: 4500, link: 1500 };
+const LINK_WINDOW = 7;     // 信件前後幾天內的對話拿來比對
+const LINK_CANDS = 45;     // 每封信最多送幾則候選對話給 AI
 const ATT_FOLDER = '對話整理附件';   // 雲端硬碟資料夾名稱
 const MAX_IMAGES = 2;
 const TZ = 'Asia/Taipei';
 
 const SHEETS = {
   users:  { name: '使用者',   head: ['代碼', '名稱', '啟用', '備註', '最後使用'] },
-  groups: { name: '群組',     head: ['群組ID', '名稱', '說明', '建立時間', '啟用', '訊息數', '最早日期', '最新日期'] },
+  groups: { name: '群組',     head: ['群組ID', '名稱', '說明', '建立時間', '啟用', '訊息數', '最早日期', '最新日期', '類型'] },
   msgs:   { name: '訊息',     head: ['訊息ID', '群組ID', '日期', '時間', '發言人', '內容', '引用', '附件', '語言', '首次上傳', '出現的上傳', '建立時間'] },
   sums:   { name: '摘要',     head: ['群組ID', '日期', '更新時間', '模型', '標題', '重點', 'JSON'] },
   vocab:  { name: '單字',     head: ['單字', '中文', '說明', '例句', '群組ID', '日期', '訊息ID', '上傳ID', '建立時間'] },
@@ -39,6 +42,8 @@ const SHEETS = {
   events: { name: '事件',     head: ['事件ID', '群組ID', '來源日期', '類型', '事件日期', '日期說明', '標題', '內容', '相關人', '對象', '主題', '狀態', '嚴重度', '訊息ID', '更新時間'] },
   reports:{ name: '報告',     head: ['報告ID', '建立時間', '使用者', '起', '迄', '群組', '標題', 'JSON1', 'JSON2', 'JSON3', 'JSON4', 'JSON5', 'JSON6'] },
   vmarks: { name: '單字標記', head: ['單字', '標記', '練習次數', '答對', '答錯', '最後練習', '最近結果', '更新時間', '使用者'] },
+  mails:  { name: '信件',     head: ['訊息ID', '群組ID', '日期', '時間', '寄件人', '收件人', '主旨', '來源', '上傳ID', '建立時間'] },
+  links:  { name: '相關對應', head: ['對應ID', '信件訊息ID', '對話訊息ID', '理由', '把握', '建立方式', '狀態', '建立時間'] },
   usage:  { name: '用量',     head: ['時間', '使用者', '動作', '模型', '圖片數', '輸入token', '輸出token', '估計美元'] },
 };
 
@@ -85,9 +90,10 @@ function setup() {
   const groups = sheet('groups');
   if (groups.getLastRow() < 2) {
     const now = stamp();
-    const rows = SEED_GROUPS.map((n, i) => ['g' + String(i + 1).padStart(3, '0'), n, '', now, 'TRUE', '0', '', '']);
+    const rows = SEED_GROUPS.map((n, i) => ['g' + String(i + 1).padStart(3, '0'), n, '', now, 'TRUE', '0', '', '', 'chat']);
     groups.getRange(2, 1, rows.length, rows[0].length).setValues(rows);
   }
+  if (!groupRows().some(g => g.kind === 'mail')) groupSave({ group: { name: '信件', note: '從 Outlook 貼上的信件(原信或 Copilot 整理)', kind: 'mail' } });
   attFolder();   // 順便建立雲端硬碟資料夾(第一次會要求雲端硬碟權限)
   Logger.log('完成。代碼請看「使用者」工作表。');
 }
@@ -122,6 +128,10 @@ function doPost(e) {
       case 'reportGet':    return out(reportGet(req));
       case 'vocabMark':    return out(vocabMark(user, req));
       case 'vocabPractice': return out(vocabPractice(user, req));
+      case 'saveMails':    return out(saveMails(user, req));
+      case 'linkTargets':  return out(linkTargets(req));
+      case 'linkMails':    return out(linkMails(user, req));
+      case 'linkRemove':   return out(linkRemove(req));
     }
     return out({ ok: false, code: 'bad_action' });
   } catch (err) {
@@ -144,11 +154,16 @@ function readAll(k) {
   if (n <= 0) return [];
   return sh.getRange(2, 1, n, w).getValues().map(r => r.map(v => (v === null || v === undefined) ? '' : String(v)));
 }
+function readOpt(k) { try { return readAll(k); } catch (e) { return []; } }   // 新工作表還沒 setup 時當成空的
 function appendRows(k, rows) {
   if (!rows.length) return;
   const sh = sheet(k), w = SHEETS[k].head.length;
   const start = sh.getLastRow() + 1;
-  sh.getRange(start, 1, rows.length, w).setNumberFormat('@').setValues(rows.map(r => r.slice(0, w).map(v => v === null || v === undefined ? '' : String(v))));
+  sh.getRange(start, 1, rows.length, w).setNumberFormat('@').setValues(rows.map(r => {
+    const o = r.slice(0, w).map(v => v === null || v === undefined ? '' : String(v));
+    while (o.length < w) o.push('');
+    return o;
+  }));
 }
 function stamp() { return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd HH:mm:ss'); }
 function newCode(prefix) {
@@ -186,7 +201,7 @@ function touchUser(u) { try { sheet('users').getRange(u.row, 5).setValue(stamp()
 /* ===== 群組 ===== */
 function groupRows() {
   return readAll('groups').map((r, i) => ({ id: r[0], name: r[1], note: r[2], created: r[3], enabled: isTrue(r[4]),
-    count: +r[5] || 0, first: r[6], last: r[7], row: i + 2 }));
+    count: +r[5] || 0, first: r[6], last: r[7], kind: r[8] === 'mail' ? 'mail' : 'chat', row: i + 2 }));
 }
 function findGroup(id) { return groupRows().find(g => g.id === id) || null; }
 
@@ -208,8 +223,9 @@ function groupSave(req) {
     let max = 0;
     all.forEach(x => { const n = parseInt(String(x.id).replace(/\D/g, ''), 10); if (n > max) max = n; });
     const id = 'g' + String(max + 1).padStart(3, '0');
-    appendRows('groups', [[id, name, clip(g.note || '', 500), stamp(), 'TRUE', '0', '', '']]);
-    return { ok: true, group: { id, name, note: g.note || '', enabled: true, count: 0, first: '', last: '' } };
+    const kind = g.kind === 'mail' ? 'mail' : 'chat';
+    appendRows('groups', [[id, name, clip(g.note || '', 500), stamp(), 'TRUE', '0', '', '', kind]]);
+    return { ok: true, group: { id, name, note: g.note || '', enabled: true, count: 0, first: '', last: '', kind } };
   } finally { lock.releaseLock(); }
 }
 
@@ -529,7 +545,7 @@ function summarizeDay(user, req) {
   const date = validDate(req.date); if (!date) throw { code: 'bad_request', message: '日期格式錯誤' };
   const list = dayMessages(g.id, date), atts = dayAtts(g.id, date);
   if (!list.length && !atts.length) throw { code: 'no_messages', message: '這一天沒有訊息' };
-  const prompt = '對話群:' + g.name + '\n日期:' + date + '\n共 ' + list.length + ' 則訊息:\n\n' + clip(linesFor(list, atts), 120000);
+  const prompt = '對話群:' + g.name + mailNote(g) + '\n日期:' + date + '\n共 ' + list.length + ' 則訊息:\n\n' + clip(linesFor(list, atts), 120000);
   const r = callClaude(user, 'summary', MODELS.summary, [{ type: 'text', text: prompt }], MAX_TOKENS.summary, SUMMARY_SYSTEM, 0);
   const j = parseLoose(r.text);
   if (!j) throw { code: 'bad_ai', message: 'AI 回傳的摘要解析失敗' };
@@ -574,7 +590,7 @@ function vocabDay(user, req) {
   let items = [];
   if (list.some(m => /[A-Za-z]{3,}/.test(m.text + m.quote)) || atts.some(a => /[A-Za-z]{3,}/.test(a.content))) {
     const skip = readAll('vmarks').filter(r => r[1] === 'skip').map(r => r[0]).slice(-200);
-    const prompt = '對話群:' + g.name + '\n日期:' + date +
+    const prompt = '對話群:' + g.name + mailNote(g) + '\n日期:' + date +
       (skip.length ? '\n學生已經標示不需要學、不要再挑的字:' + skip.join('、') : '') + '\n\n' + clip(linesFor(list, atts), 120000);
     const r = callClaude(user, 'vocab', MODELS.vocab, [{ type: 'text', text: prompt }], MAX_TOKENS.vocab, VOCAB_SYSTEM, 0);
     const j = parseLoose(r.text);
@@ -608,7 +624,7 @@ function vocabOut(r) {
 
 /* ===== 5. 讀取 ===== */
 function bootstrap() {
-  const groups = groupRows().map(g => ({ id: g.id, name: g.name, note: g.note, enabled: g.enabled, count: g.count, first: g.first, last: g.last }));
+  const groups = groupRows().map(g => ({ id: g.id, name: g.name, note: g.note, enabled: g.enabled, count: g.count, first: g.first, last: g.last, kind: g.kind }));
   const runs = readAll('runs').slice(-400).reverse().map(r => ({ id: r[0], time: r[1], user: r[2], group: r[3], file: r[4],
     capture: r[5], segments: r[6], total: r[7], added: r[8], from: r[9], to: r[10] }));
   const sums = readAll('sums').map(r => ({ group: r[0], date: r[1], updated: r[2], title: r[4] }));
@@ -623,19 +639,19 @@ function bootstrap() {
 }
 function groupData(req) {
   const gid = String(req.groupId || '');
-  const msgs = [];
-  readAll('msgs').forEach((r, i) => { if (r[1] === gid) msgs.push(rowToMsg(r, i)); });
+  const msgs = [], rows = readAll('msgs');
+  rows.forEach((r, i) => { if (r[1] === gid) msgs.push(rowToMsg(r, i)); });
   const sums = readAll('sums').filter(r => r[0] === gid).map(sumOut);
   const atts = readAll('atts').filter(r => r[1] === gid).map(attOut);
-  return { ok: true, messages: msgs, summaries: sums, atts };
+  return Object.assign({ ok: true, messages: msgs, summaries: sums, atts }, linkInfo(msgs, rows));
 }
 function dateData(req) {
   const d = validDate(req.date);
-  const msgs = [];
-  readAll('msgs').forEach((r, i) => { if (r[2] === d) msgs.push(rowToMsg(r, i)); });
+  const msgs = [], rows = readAll('msgs');
+  rows.forEach((r, i) => { if (r[2] === d) msgs.push(rowToMsg(r, i)); });
   const sums = readAll('sums').filter(r => r[1] === d).map(sumOut);
   const atts = readAll('atts').filter(r => r[3] === d).map(attOut);
-  return { ok: true, messages: msgs, summaries: sums, atts };
+  return Object.assign({ ok: true, messages: msgs, summaries: sums, atts }, linkInfo(msgs, rows));
 }
 function sumOut(r) {
   let s = null; try { s = JSON.parse(r[6]); } catch (e) {}
@@ -643,23 +659,23 @@ function sumOut(r) {
 }
 function runData(req) {
   const id = String(req.runId || '');
-  const msgs = [];
-  readAll('msgs').forEach((r, i) => { if (String(r[10]).split(',').indexOf(id) >= 0) msgs.push(rowToMsg(r, i)); });
+  const msgs = [], rows = readAll('msgs');
+  rows.forEach((r, i) => { if (String(r[10]).split(',').indexOf(id) >= 0) msgs.push(rowToMsg(r, i)); });
   const atts = readAll('atts').filter(r => r[10] === id).map(attOut);
-  return { ok: true, messages: msgs, atts };
+  return Object.assign({ ok: true, messages: msgs, atts }, linkInfo(msgs, rows));
 }
 function search(req) {
   const q = String(req.q || '').trim().toLowerCase();
   if (!q) return { ok: true, messages: [] };
   const terms = q.split(/\s+/).filter(Boolean);
-  const out = [];
-  readAll('msgs').forEach((r, i) => {
+  const out = [], rows = readAll('msgs');
+  rows.forEach((r, i) => {
     if (out.length >= 300) return;
     const hay = (r[4] + ' ' + r[5] + ' ' + r[6] + ' ' + r[7]).toLowerCase();
     if (terms.every(t => hay.indexOf(t) >= 0)) out.push(rowToMsg(r, i));
   });
   const atts = readAll('atts').filter(r => terms.every(t => (r[4] + ' ' + r[8] + ' ' + r[9]).toLowerCase().indexOf(t) >= 0)).slice(0, 100).map(attOut);
-  return { ok: true, messages: out, atts };
+  return Object.assign({ ok: true, messages: out, atts }, linkInfo(out, rows));
 }
 function deleteMsg(req) {
   const id = String(req.id || '');
@@ -669,6 +685,8 @@ function deleteMsg(req) {
     const i = rows.findIndex(r => r[0] === id);
     if (i < 0) return { ok: true, deleted: 0 };
     sheet('msgs').deleteRow(i + 2);
+    const mr = readOpt('mails'); for (let k = mr.length - 1; k >= 0; k--) if (mr[k][0] === id) sheet('mails').deleteRow(k + 2);
+    const lr = readOpt('links'); for (let k = lr.length - 1; k >= 0; k--) if (lr[k][1] === id || lr[k][2] === id) sheet('links').deleteRow(k + 2);
     const gid = rows[i][1];
     const g = findGroup(gid);
     if (g) sheet('groups').getRange(g.row, 6).setValue(String(Math.max(0, g.count - 1)));
@@ -792,7 +810,7 @@ function eventsDay(user, req) {
   const list = dayMessages(g.id, date), atts = dayAtts(g.id, date);
   if (!list.length && !atts.length) throw { code: 'no_messages', message: '這一天沒有訊息' };
   const topics = knownTopics(80);
-  const prompt = '對話群:' + g.name + '\n對話日期:' + date + '(星期' + '日一二三四五六'[new Date(date + 'T00:00:00Z').getUTCDay()] + ')\n' +
+  const prompt = '對話群:' + g.name + mailNote(g) + '\n對話日期:' + date + '(星期' + '日一二三四五六'[new Date(date + 'T00:00:00Z').getUTCDay()] + ')\n' +
     '既有主題:' + (topics.length ? topics.join('、') : '(還沒有)') + '\n\n' + clip(linesFor(list, atts), 120000);
   const r = callClaude(user, 'events', MODELS.events, [{ type: 'text', text: prompt }], MAX_TOKENS.events, EVENTS_SYSTEM, 0);
   const j = parseLoose(r.text);
@@ -820,7 +838,7 @@ function eventsDay(user, req) {
 /* ===== 8. 期間報告 ===== */
 const REPORT_INTRO = [
   '你是台灣離岸風場運維現場協調(AOC)的資深助理,要幫 AOC 同仁掌握一段期間內「整個專案」的走向。',
-  '輸入是這段期間各對話群抽出的事件(e 開頭編號)、每日摘要標題與待追問(q 開頭編號)。資訊散在不同群組。',
+  '輸入是這段期間各對話群抽出的事件(e 開頭編號)、每日摘要標題與待追問(q 開頭編號)。資訊散在不同群組;群組也可能是電子郵件(標「Copilot 整理」的是二手摘要,日期數字以對話或原信為準)。',
   '只根據輸入內容,不要臆測。文字用繁體中文(台灣用語),人名、船名、風機編號照原文。',
 ];
 // 第一次呼叫:整體走向+跨群組議題
@@ -852,7 +870,8 @@ function periodReport(user, req) {
   readAll('msgs').forEach(r => { if (cov[r[1]] && inR(r[2])) cov[r[1]].msgDays[r[2]] = (cov[r[1]].msgDays[r[2]] || 0) + 1; });
   const sums = readAll('sums').filter(r => cov[r[0]] && inR(r[1])).map(sumOut);
   sums.forEach(s => cov[s.group].sumDays[s.date] = true);
-  const evAll = readAll('events').map(eventOut).filter(e => cov[e.group]);
+  const cop = {}; readOpt('mails').forEach(r => { if (r[7] === 'copilot') cop[r[0]] = true; });
+  const evAll = readAll('events').map(eventOut).filter(e => cov[e.group]).map(e => (e.msgs.length && e.msgs.every(m => cop[m]) ? Object.assign(e, { copilot: true }) : e));
   evAll.forEach(e => { if (inR(e.src)) cov[e.group].evDays[e.src] = true; });
   // 期間內提到的事件,加上期間前提到、但日期落在期間內的期限
   const evs = evAll.filter(e => inR(e.src) || (e.src < from && inR(e.date)));
@@ -871,7 +890,7 @@ function periodReport(user, req) {
     group: s.group, groupName: gname(s.group), date: s.date, zh: q.zh, refs: q.refs || [] })));
   const sumLines = sums.map(s => '[' + s.date + '][' + gname(s.group) + '] ' + ((s.summary && s.summary.title && s.summary.title.zh) || ''));
   const qLines = questions.map(q => q.id + ' [' + q.date + '][' + q.groupName + '] ' + q.zh);
-  const evLines = evs.map(e => e.id + ' [' + e.src + '][' + gname(e.group) + '][' + e.type + (e.severity ? '/' + e.severity : '') + '][' + (e.topic || '-') + ']' +
+  const evLines = evs.map(e => e.id + ' [' + e.src + '][' + gname(e.group) + (e.copilot ? '/Copilot 整理' : '') + '][' + e.type + (e.severity ? '/' + e.severity : '') + '][' + (e.topic || '-') + ']' +
     (e.date ? '[事件日 ' + e.date + ']' : '') + '[' + e.status + '] ' + e.title + ':' + e.detail + (e.who ? '(' + e.who + ')' : ''));
   const withData = coverage.filter(c => c.days.length).map(c => c.name);
   const prompt = '期間:' + from + ' ~ ' + to + '\n有資料的對話群:' + withData.join('、') + '\n\n事件(' + evs.length + ' 個):\n' +
@@ -965,4 +984,202 @@ function vocabPractice(user, req) {
     r[5] = stamp();
     r[6] = (String(r[6] || '') + list.map(x => x ? '1' : '0').join('')).slice(-10);
   }) };
+}
+
+/* ===== 10. 信件(從 Outlook 貼上:原信或 Copilot 整理) ===== */
+function mailNote(g) {
+  return g && g.kind === 'mail' ? '(這個群組是電子郵件,不是 Teams 對話;每則是一封信,開頭寫主旨;標【Copilot 整理】的是 Copilot 整理過的重點,不是原文)' : '';
+}
+function nextRunId() {
+  let maxRun = 0;
+  readAll('runs').forEach(r => { const n = parseInt(String(r[0]).replace(/\D/g, ''), 10); if (n > maxRun) maxRun = n; });
+  return 'r' + String(maxRun + 1).padStart(4, '0');
+}
+function guessLang(t) {
+  const cjk = (String(t).match(/[一-鿿]/g) || []).length, lat = (String(t).match(/[A-Za-z]/g) || []).length;
+  return cjk < 10 ? (lat ? 'en' : 'zh') : (lat > cjk ? 'mixed' : 'zh');
+}
+function mailText(m) {
+  return (m.source === 'copilot' ? '【Copilot 整理】\n' : '') + '主旨:' + m.subject + (m.to ? '\n收件人:' + m.to : '') + '\n\n' + m.body;
+}
+function saveMails(user, req) {
+  const g = findGroup(req.groupId);
+  if (!g) throw { code: 'bad_group' };
+  if (g.kind !== 'mail') throw { code: 'bad_request', message: '這個群組不是信件群組' };
+  const incoming = (Array.isArray(req.mails) ? req.mails : []).slice(0, 300);
+  const lock = LockService.getScriptLock(); lock.waitLock(30000);
+  try {
+    const runId = nextRunId(), now = stamp();
+    const data = readAll('msgs'), mrows = readAll('mails');
+    const msgIdx = {}; data.forEach((r, i) => msgIdx[r[0]] = i);
+    const metas = mrows.filter(r => r[1] === g.id).map(r => ({ id: r[0], date: r[2], time: r[3], s: norm(r[4]), subj: norm(r[6]), source: r[7], row: r }));
+    const appends = [], mailAppends = [], ids = [], fresh = [];
+    let newCount = 0, upgraded = 0, msgChanged = false, metaChanged = false;
+    const dates = {};
+    incoming.forEach((x, idx) => {
+      x = x || {};
+      const m = {
+        date: validDate(x.date), time: validTime(x.time),
+        sender: clip(String(x.sender || '').trim(), 120), to: clip(String(x.to || '').trim(), 400),
+        subject: clip(String(x.subject || '').trim(), 300), body: clip(String(x.body || '').trim(), 18000),
+        source: x.source === 'copilot' ? 'copilot' : 'original',
+      };
+      if (!m.date || !m.sender || (!m.subject && !m.body)) { ids[idx] = ''; return; }
+      dates[m.date] = true;
+      const s = norm(m.sender), subj = norm(m.subject);
+      const hit = metas.find(o => o.date === m.date && o.s === s && o.subj === subj && (!o.time || !m.time || o.time === m.time));
+      const text = mailText(m), lang = guessLang(m.subject + ' ' + m.body);
+      if (hit) {
+        ids[idx] = hit.id;
+        const di = msgIdx[hit.id];
+        const arr = di !== undefined ? data[di] : (appends.find(a => a[0] === hit.id) || null);
+        if (arr) {
+          const rs = String(arr[10] || '').split(',').filter(Boolean);
+          if (rs.indexOf(runId) < 0) { rs.push(runId); arr[10] = rs.join(','); msgChanged = true; }
+          // 原信取代 Copilot 整理的版本
+          if (hit.source === 'copilot' && m.source === 'original') {
+            arr[5] = text; arr[8] = lang; if (m.time) arr[3] = m.time; msgChanged = true;
+            hit.row[3] = m.time || hit.row[3]; hit.row[5] = m.to || hit.row[5]; hit.row[7] = 'original'; hit.row[8] = runId; hit.source = 'original';
+            metaChanged = true; upgraded++; fresh.push(hit.id);
+          }
+        }
+        return;
+      }
+      let id = 'x' + md5hex([g.id, m.date, s, subj, m.time].join('|')).slice(0, 14), k = 0;
+      while (msgIdx[id] !== undefined || appends.some(a => a[0] === id)) id = id.replace(/-\d+$/, '') + '-' + (++k);
+      appends.push([id, g.id, m.date, m.time, m.sender, text, '', '', lang, runId, runId, now]);
+      const row = [id, g.id, m.date, m.time, m.sender, m.to, m.subject, m.source, runId, now];
+      mailAppends.push(row);
+      metas.push({ id, date: m.date, time: m.time, s, subj, source: m.source, row });
+      ids[idx] = id; fresh.push(id); newCount++;
+    });
+    if (msgChanged && data.length) sheet('msgs').getRange(2, 1, data.length, 12).setNumberFormat('@').setValues(data.map(r => r.slice(0, 12)));
+    if (metaChanged && mrows.length) sheet('mails').getRange(2, 1, mrows.length, 10).setNumberFormat('@').setValues(mrows);
+    appendRows('msgs', appends);
+    appendRows('mails', mailAppends);
+    let cnt = 0, first = '', last = '';
+    data.concat(appends).forEach(r => {
+      if (r[1] !== g.id) return;
+      cnt++;
+      if (r[2]) { if (!first || r[2] < first) first = r[2]; if (!last || r[2] > last) last = r[2]; }
+    });
+    sheet('groups').getRange(g.row, 6, 1, 3).setValues([[String(cnt), first, last]]);
+    const ds = Object.keys(dates).sort();
+    appendRows('runs', [[runId, now, user.name, g.id, clip(req.fileName || '貼上信件', 300), '', '',
+      String(incoming.length), String(newCount), ds[0] || '', ds[ds.length - 1] || '']]);
+    return { ok: true, runId, newCount, upgraded, total: incoming.length, dates: ds, ids, fresh: fresh.filter((v, i, a) => a.indexOf(v) === i) };
+  } finally { lock.releaseLock(); }
+}
+
+/* 信件 ↔ 對話:哪幾則對話在講同一件事 */
+function mailMeta() {
+  const m = {}; readOpt('mails').forEach(r => m[r[0]] = { id: r[0], group: r[1], date: r[2], time: r[3], sender: r[4], to: r[5], subject: r[6], source: r[7] });
+  return m;
+}
+function brief(r) { return r ? { id: r[0], group: r[1], date: r[2], time: r[3], sender: r[4], text: clip(r[5], 240) } : null; }
+function linkInfo(msgs, rows) {
+  const want = {}; msgs.forEach(m => want[m.id] = true);
+  const lr = readOpt('links').filter(r => r[6] === 'ok' && (want[r[1]] || want[r[2]]));
+  const meta = mailMeta(), mails = {};
+  msgs.forEach(m => { if (meta[m.id]) mails[m.id] = meta[m.id]; });
+  if (!lr.length) return { links: [], mails };
+  const byId = {}; rows.forEach(r => byId[r[0]] = r);
+  const links = lr.filter(r => byId[r[1]] && byId[r[2]]).map(r => ({ id: r[0], mail: r[1], msg: r[2], reason: r[3], conf: r[4], by: r[5],
+    mailBrief: Object.assign(brief(byId[r[1]]), { subject: (meta[r[1]] || {}).subject || '', source: (meta[r[1]] || {}).source || '' }),
+    msgBrief: brief(byId[r[2]]) }));
+  return { links, mails };
+}
+/* 對話存檔後:找出日期在前後 LINK_WINDOW 天內的信件,讓網頁逐封重新比對 */
+function linkTargets(req) {
+  const ds = (Array.isArray(req.dates) ? req.dates : []).map(validDate).filter(Boolean);
+  if (!ds.length) return { ok: true, ids: [] };
+  const lo = shiftDate(ds.slice().sort()[0], -LINK_WINDOW), hi = shiftDate(ds.slice().sort().pop(), LINK_WINDOW);
+  const ids = readAll('mails').filter(r => r[2] >= lo && r[2] <= hi).map(r => r[0]);
+  return { ok: true, ids };
+}
+function shiftDate(iso, n) { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); }
+const STOP = ('the and for with this that from have has had will would can could should please thanks thank you your our are was were been be not but all any ' +
+  'about into also there their them they its it\'s just let know need needs per via re fw fwd dear hi hello regards best kind team today tomorrow yesterday ' +
+  'yunlin sgre siemens gamesa energy wind farm').split(' ');
+function tokens(text) {
+  const t = String(text || '').toLowerCase(), out = {};
+  (t.match(/[a-z][a-z0-9_\-]{2,}|\d+[\/.:-]\d+(?:[\/.:-]\d+)?|[a-z]*\d{2,}[a-z0-9]*/g) || []).forEach(w => { if (STOP.indexOf(w) < 0) out[w] = 1; });
+  const cjk = t.replace(/[^一-鿿]+/g, ' ').split(' ');
+  cjk.forEach(seg => { for (let i = 0; i + 1 < seg.length; i++) out[seg.substr(i, 2)] = 1; });
+  return Object.keys(out);
+}
+const LINK_SYSTEM = [
+  '你要找出 Teams 對話裡,跟一封電子郵件講「同一件具體事情」的訊息。',
+  '同一件事 = 同一批人、同一個日期或期限、同一艘船、同一台風機、同一份文件、同一個要求或問題。只是同一個大主題(例如都在講人力)不算。',
+  '例如:信裡確認 10/24 報到的名單,對話裡有人問「Muehlhan 哪天到」→ 相關;信講 ActSafe 檢驗報告,對話講吊掛證照 → 不相關。',
+  '每個配對寫 reason(繁體中文 40 字內,說明兩邊講的是哪件事)與 conf(high 很確定 / medium 大概是)。不確定就不要列。最多 8 則。',
+  '只輸出 JSON:{"links":[{"c":3,"reason":"","conf":"high"}]}',
+].join('\n');
+function linkMails(user, req) {
+  const ids = (Array.isArray(req.ids) ? req.ids : [req.id]).filter(Boolean).slice(0, 3);
+  if (!ids.length) return { ok: true, added: [] };
+  const rows = readAll('msgs'), meta = mailMeta(), groups = groupRows();
+  const kind = {}; groups.forEach(g => kind[g.id] = g.kind);
+  const gname = id => (groups.find(g => g.id === id) || {}).name || id;
+  const existing = readAll('links');
+  const added = [], skipped = [];
+  ids.forEach(mid => {
+    const mr = rows.find(r => r[0] === mid), mm = meta[mid];
+    if (!mr || !mm) { skipped.push(mid); return; }
+    const lo = shiftDate(mm.date, -LINK_WINDOW), hi = shiftDate(mm.date, LINK_WINDOW);
+    const done = {}; existing.forEach(r => { if (r[1] === mid) done[r[2]] = true; });
+    const pool = rows.filter(r => kind[r[1]] !== 'mail' && r[2] >= lo && r[2] <= hi && !done[r[0]]);
+    if (!pool.length) return;
+    // 先用關鍵字重疊挑候選,太常見的字權重低
+    // 只比內文(人名到處都是,拿來比會誤配)
+    const df = {}; const toks = pool.map(r => { const t = tokens(r[5] + ' ' + r[6] + ' ' + r[7]); t.forEach(w => df[w] = (df[w] || 0) + 1); return t; });
+    const mailBody = String(mr[5]).split('\n').filter(l => !/^(收件人:|【Copilot 整理】)/.test(l)).join('\n');
+    const mt = {}; tokens(mailBody).forEach(w => mt[w] = 1);
+    const scored = pool.map((r, i) => {
+      let sc = 0; toks[i].forEach(w => { if (mt[w]) sc += 1 / Math.log(2 + df[w]); });
+      const gap = Math.abs((new Date(r[2]) - new Date(mm.date)) / 864e5);
+      return { r, sc: sc * (1 - gap / (LINK_WINDOW * 3)) };
+    }).filter(x => x.sc > 0.35).sort((a, b) => b.sc - a.sc).slice(0, LINK_CANDS);
+    if (!scored.length) return;
+    scored.sort((a, b) => (a.r[2] + a.r[3]).localeCompare(b.r[2] + b.r[3]));
+    const lines = ['信件:', '日期 ' + mm.date + ' ' + (mm.time || '') + '|寄件人 ' + mm.sender + (mm.to ? '|收件人 ' + clip(mm.to, 200) : '') +
+      (mm.source === 'copilot' ? '|(Copilot 整理的重點,日期可能有誤差)' : ''), clip(mr[5], 3500), '', '候選的 Teams 訊息:'];
+    scored.forEach((x, k) => lines.push('c' + (k + 1) + ' [' + gname(x.r[1]) + '][' + x.r[2] + ' ' + (x.r[3] || '') + '] ' + clip(x.r[4], 40) + ':' +
+      clip(x.r[5], 220).replace(/\n/g, ' ') + (x.r[7] ? ' (附件 ' + clip(x.r[7], 120).replace(/\n/g, ' ') + ')' : '')));
+    const res = callClaude(user, 'link', MODELS.link, [{ type: 'text', text: lines.join('\n') }], MAX_TOKENS.link, LINK_SYSTEM, 0);
+    const j = parseLoose(res.text) || {};
+    (Array.isArray(j.links) ? j.links : []).slice(0, 10).forEach(l => {
+      const k = parseInt(String(l && l.c).replace(/\D/g, ''), 10);
+      if (!(k >= 1 && k <= scored.length)) return;
+      const conf = l.conf === 'high' ? 'high' : l.conf === 'medium' ? 'medium' : '';
+      if (!conf) return;
+      const cid = scored[k - 1].r[0];
+      if (added.some(a => a[1] === mid && a[2] === cid)) return;
+      added.push(['', mid, cid, clip(l.reason || '', 200), conf, 'ai', 'ok', '']);
+    });
+  });
+  if (added.length) {
+    const lock = LockService.getScriptLock(); lock.waitLock(20000);
+    try {
+      const cur = readAll('links'), have = {};
+      let max = 0;
+      cur.forEach(r => { have[r[1] + '|' + r[2]] = true; const n = parseInt(String(r[0]).replace(/\D/g, ''), 10); if (n > max) max = n; });
+      const now = stamp(), rowsOut = [];
+      added.forEach(a => { if (have[a[1] + '|' + a[2]]) return; have[a[1] + '|' + a[2]] = true; a[0] = 'k' + String(++max).padStart(5, '0'); a[7] = now; rowsOut.push(a); });
+      appendRows('links', rowsOut);
+      return { ok: true, added: rowsOut.map(a => ({ id: a[0], mail: a[1], msg: a[2], reason: a[3], conf: a[4] })), skipped };
+    } finally { lock.releaseLock(); }
+  }
+  return { ok: true, added: [], skipped };
+}
+/* 刪掉配錯的(保留紀錄,之後重新比對不會再配回來) */
+function linkRemove(req) {
+  const id = String(req.id || '');
+  const lock = LockService.getScriptLock(); lock.waitLock(20000);
+  try {
+    const rows = readAll('links'), i = rows.findIndex(r => r[0] === id);
+    if (i < 0) return { ok: true, removed: 0 };
+    sheet('links').getRange(i + 2, 7).setValue('removed');
+    return { ok: true, removed: 1 };
+  } finally { lock.releaseLock(); }
 }
