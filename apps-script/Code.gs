@@ -20,11 +20,12 @@ const MODELS = {
   events:     'claude-opus-5-5',   // 每日事件抽取(期限、決策、突發、人員、船機)
   report:     'claude-opus-5-5',   // 期間報告
   link:       'claude-opus-5-5',   // 信件 ↔ 對話 找相關訊息
+  ask:        'claude-opus-5-5',   // 排班工具的「問 AI」
 };
 // 每百萬 token 美元 [輸入, 輸出],只用來估算「用量」工作表
 const PRICE = { 'claude-opus-5-5': [5, 25], 'claude-sonnet-5-5': [3, 15], 'claude-haiku-4-5-20251001': [1, 5] };
 // 實測 Opus 約每秒 100 token;UrlFetchApp 約 60 秒逾時,所以單次輸出抓 4500 以內
-const MAX_TOKENS = { transcribe: 3500, summary: 4500, vocab: 3500, attach: 4000, match: 1000, events: 4000, report: 4500, link: 1500 };
+const MAX_TOKENS = { transcribe: 3500, summary: 4500, vocab: 3500, attach: 4000, match: 1000, events: 4000, report: 4500, link: 1500, ask: 2500 };
 const LINK_WINDOW = 7;     // 信件前後幾天內的對話拿來比對
 const LINK_CANDS = 45;     // 每封信最多送幾則候選對話給 AI
 const ATT_FOLDER = '對話整理附件';   // 雲端硬碟資料夾名稱
@@ -132,6 +133,7 @@ function doPost(e) {
       case 'linkTargets':  return out(linkTargets(req));
       case 'linkMails':    return out(linkMails(user, req));
       case 'linkRemove':   return out(linkRemove(req));
+      case 'ask':          return out(ask(user, req));
     }
     return out({ ok: false, code: 'bad_action' });
   } catch (err) {
@@ -231,10 +233,16 @@ function groupSave(req) {
 
 /* ===== Claude 呼叫 ===== */
 function callClaude(user, action, model, content, maxTokens, system, nImages) {
-  const key = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
-  if (!key) throw { code: 'no_key', message: '指令碼屬性沒有 ANTHROPIC_API_KEY' };
   const payload = { model, max_tokens: maxTokens, messages: [{ role: 'user', content }] };
   if (system) payload.system = system;
+  const body = postAnthropic(payload);
+  const text = (body.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
+  logUsage(user, action, model, nImages || 0, body.usage || {});
+  return { text, truncated: body.stop_reason === 'max_tokens' };
+}
+function postAnthropic(payload) {
+  const key = PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY');
+  if (!key) throw { code: 'no_key', message: '指令碼屬性沒有 ANTHROPIC_API_KEY' };
   let status = 0, body = {};
   for (let attempt = 0; attempt < 2; attempt++) {
     let res;
@@ -260,9 +268,7 @@ function callClaude(user, action, model, content, maxTokens, system, nImages) {
     if (status === 429 || status === 529) throw { code: 'rate_limited', message: msg };
     throw { code: 'api_error', message: msg };
   }
-  const text = (body.content || []).filter(c => c.type === 'text').map(c => c.text).join('');
-  logUsage(user, action, model, nImages || 0, body.usage || {});
-  return { text, truncated: body.stop_reason === 'max_tokens' };
+  return body;
 }
 
 function logUsage(user, action, model, n, u) {
@@ -1182,4 +1188,65 @@ function linkRemove(req) {
     sheet('links').getRange(i + 2, 7).setValue('removed');
     return { ok: true, removed: 1 };
   } finally { lock.releaseLock(); }
+}
+
+/* ===== 11. 排班工具的「問 AI」 =====
+   網頁(雲林排班工具)把對話送來;AI 需要資料時回 tool_use,
+   由網頁在使用者電腦上查 Excel、算好再送回來(資料不存在這裡,也不寫進試算表)。 */
+const ASK_SYSTEM = [
+  '你是台灣雲林離岸風場(Siemens Gamesa)現場協調 AOC 的排班助理,回答 AOC 同仁(主要是 Tina)關於排班的問題。',
+  '資料來源是 AOC 電腦上已載入的兩個 Excel:人力總表(Resource Planning 的 Allowance 分頁)與每日出海計畫(Hand-Over 的 1.Daily Ops)。用工具查,不要憑印象。',
+  '',
+  '【一定要遵守】',
+  '- 人數、名單、天數一律用工具查到的結果,不要自己心算或猜;查不到就說查不到。',
+  '- 人名用總表上的寫法(例如「Chen, YiAn (Kenneth)」「Jacky Hong」);列名單用 1- 2- 3- 編號。',
+  '- 用繁體中文(台灣用語),簡潔;人名、船名、風機編號保留原文。先給結論,再給依據。',
+  '- 你只能回答與建議,不能改 Excel;要改的地方請明確告訴 AOC 改哪一天、哪一隊、哪個人。',
+  '- 使用者附的檔案(圖片、PDF、Excel 轉成的表格文字)也可以拿來比對。',
+  '',
+  '【總表代碼】',
+  '- 等級碼 TS/TSF/MT/MTF/CT/BT/HV/TSWA/W = 當天可派工(計畫區)。OF = 已出海、ON = 留岸上(已發生的紀錄,OF 有出海津貼)。',
+  '- L = 請假、T = 訓練、fly = 交通日、空白 = 不在這一輪;FMS/HL/F2 = 當天不是為雲林工作。隱藏列 = 不排。',
+  '- 總表以「今天」為界:今天以前多是 OF/ON 紀錄,今天起是等級碼計畫。全員 ON、沒有 OF = 天氣取消日,不比人數。',
+  '- w 是等級之一,Yunlin Office 群組的人不出海;Gordon Huang 永不派工。',
+  '',
+  '【排班規則(AOC 確認過)】',
+  '- 技師兩隊七休七,週二換班;分包商同步週二輪換。連續上班最多 14 天。',
+  '- 隊長只能 TS/TSF/MT/MTF;CT、BT 只能當隊員(BT 不一定要 CT 陪)。每隊至少 3 人;每艘船總人數不超過 12。',
+  '- 年保 AS 隊理想 6 人,4~5 人算正常。ST(Senior Tech)原則不出海,缺人時偶爾會派(提醒即可)。',
+  '- 夜班目標 12 人(湊不齊就算了);夜班人選 = 總表姓名欄綠色的分包商 + Jacky Hong、Ken Chao。',
+  '- 有歐洲 HV 技師的隊,隊長要 TSF/MTF,還要搭一位 CT 或 BT。TSWA(Muehlhan 葉片組)要成雙、整組同進同出。',
+  '- OT- 前綴 = 輪休週加班;TT- = Global Travel Tech。班表姓名有刪除線 = 取消。',
+  '- IPS 等分包可以調人,但預約後要取消須出海前三天通知。',
+  '- 「班表已排」與「總表可出海」不一致時,用 day_overview 的 diff 說明差額是誰。',
+].join('\n');
+const ASK_TOOLS = [
+  { name: 'day_overview', description: '某一天的出海計畫與檢核:每隊名單(含等級、取消、對不到總表的名字、備註)、人數摘要、差額是誰、檢核發現的問題。也會說畫面上有沒有這一天的草稿。',
+    input_schema: { type: 'object', properties: { date: { type: 'string', description: 'YYYY-MM-DD' } }, required: ['date'] } },
+  { name: 'person_schedule', description: '查某人在一段期間每天的總表代碼與被排到的隊伍(含夜班),並算出連續上班天數。名字可以只打一部分(英文名、姓)。',
+    input_schema: { type: 'object', properties: { name: { type: 'string' }, from: { type: 'string', description: 'YYYY-MM-DD' }, to: { type: 'string', description: 'YYYY-MM-DD,最多 62 天' } }, required: ['name', 'from', 'to'] } },
+  { name: 'available_people', description: '某一天總表可派工的人(可依等級篩選、只看還沒被排到的),附等級、群組、是否已排、被排在哪隊。找補人時用。',
+    input_schema: { type: 'object', properties: { date: { type: 'string' }, levels: { type: 'array', items: { type: 'string' }, description: '例如 ["MT","MTF"],不填=全部' }, only_unscheduled: { type: 'boolean' } }, required: ['date'] } },
+  { name: 'find_people', description: '用部分名字、等級或群組(分包商)找總表上的人。',
+    input_schema: { type: 'object', properties: { query: { type: 'string', description: '名字片段、等級(如 CT)或群組(如 IPS)' } }, required: ['query'] } },
+  { name: 'date_range_counts', description: '一段期間每天的人數摘要(班表已排、總表可出海、差額、夜班人數、要處理的問題數),看趨勢或找問題日用。',
+    input_schema: { type: 'object', properties: { from: { type: 'string' }, to: { type: 'string', description: '最多 31 天' } }, required: ['from', 'to'] } },
+];
+function ask(user, req) {
+  const msgs = Array.isArray(req.messages) ? req.messages : [];
+  if (!msgs.length || msgs[0].role !== 'user' || msgs[msgs.length - 1].role !== 'user')
+    throw { code: 'bad_request', message: '對話格式錯誤' };
+  for (let i = 1; i < msgs.length; i++) if (msgs[i].role === msgs[i - 1].role) throw { code: 'bad_request', message: '對話格式錯誤' };
+  const size = JSON.stringify(msgs).length;
+  if (size > 24000000) throw { code: 'too_big', message: '對話太長或附件太大,請按「新對話」' };
+  let nImg = 0;
+  msgs.forEach(m => (Array.isArray(m.content) ? m.content : []).forEach(b => { if (b && (b.type === 'image' || b.type === 'document')) nImg++; }));
+  const payload = {
+    model: MODELS.ask, max_tokens: MAX_TOKENS.ask, tools: ASK_TOOLS, messages: msgs,
+    system: [{ type: 'text', text: ASK_SYSTEM, cache_control: { type: 'ephemeral' } },
+             { type: 'text', text: '目前狀態:\n' + clip(req.context || '', 4000) }],
+  };
+  const body = postAnthropic(payload);
+  logUsage(user, 'ask', MODELS.ask, nImg, body.usage || {});
+  return { ok: true, content: body.content || [], stop_reason: body.stop_reason || '' };
 }
